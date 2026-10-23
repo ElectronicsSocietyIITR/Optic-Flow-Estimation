@@ -316,6 +316,24 @@ def export_divergence(out: Path) -> None:
         robust = divergence_ttc(flow_moments(flow, box, pp, mask, cfg.shrink), box, rot_div, 1, dt, cfg)
         w.num(f"{k}_robust_eta", robust.eta)
         w.num(f"{k}_robust_var", robust.var)
+        # Fixed-point path (the PL engine's): quantised flow, last frame's fit as a prediction, masked int64 moments.
+        from collision_avoidance.fcw.divergence import (affine_from_moments, divergence_mask, fit_to_fixed, flow_moments_fixed,
+                                                        flow_rect, predicted_mask_fixed, quantise_flow)
+        flow_q = quantise_flow(flow)
+        w.mat(f"{k}_flow_q", flow_q[y0:y1, x0:x1].astype(np.float64))
+        fa, fb = affine_from_moments(flow_moments(flow, box, pp, mask, cfg.shrink))
+        fit_q = fit_to_fixed(fa, fb)
+        w.mat(f"{k}_fit", np.array([[*fa, *fb]]))
+        w.mat(f"{k}_fit_q", np.array([fit_q], float))
+        rect = flow_rect(box, cfg.shrink, W, H)
+        w.mat(f"{k}_rect", np.array([rect], float))
+        pred = predicted_mask_fixed(flow_q, rect, (int(round(pp[0])), int(round(pp[1]))), fit_q, 64)
+        w.mat(f"{k}_pred_mask", pred.astype(np.uint8))
+        dmask, used = divergence_mask(flow, flow_q, box, pp, (fa, fb), 1, cfg)
+        w.num(f"{k}_pred_used", used)
+        w.mat(f"{k}_fixed_moments", flow_moments_fixed(flow_q, box, pp, cfg.shrink, dmask).astype(np.float64).reshape(1, -1))
+        _, used_stale = divergence_mask(flow, flow_q, box, pp, (fa, fb), 2, cfg)
+        w.num(f"{k}_stale_used", used_stale)
     w.close()
 
 

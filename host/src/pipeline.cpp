@@ -90,6 +90,7 @@ FcwFrame FcwPipeline::process(const cv::Mat& frame_bgr, double t) {
   for (const char* k : {"looming", "scale", "horn", "divergence", "fusion_course"}) out.timings_ms[k] = 0.0;
   timings_ = &out.timings_ms;  // assess() adds its per-method time to these keys
   mark = std::chrono::steady_clock::now();
+  flow_q_ = quantiseFlow(out.flow);  // divergence runs on the PL engine's flow format
   for (const ScaleTrack* tr : select(tracks))
     out.objects.push_back(assess(*tr, gray, prev_gray, out.flow, out.ego, out.heading, yaw_rate, t, dt));
   const auto warn_mark = std::chrono::steady_clock::now();
@@ -104,6 +105,7 @@ FcwFrame FcwPipeline::process(const cv::Mat& frame_bgr, double t) {
   for (auto it = fsms_.begin(); it != fsms_.end();) it = tracks.count(it->first) ? std::next(it) : fsms_.erase(it);
   for (auto it = in_path_streak_.begin(); it != in_path_streak_.end();) it = tracks.count(it->first) ? std::next(it) : in_path_streak_.erase(it);
   for (auto it = entry_streak_.begin(); it != entry_streak_.end();) it = tracks.count(it->first) ? std::next(it) : entry_streak_.erase(it);
+  for (auto it = fits_.begin(); it != fits_.end();) it = tracks.count(it->first) ? std::next(it) : fits_.erase(it);
   on_course_.clear();
   for (const auto& o : out.objects)
     if (o.course && o.course->in_path) on_course_.insert(o.track_id);
@@ -165,10 +167,18 @@ ObjectResult FcwPipeline::assess(const ScaleTrack& track, const cv::Mat& gray, c
     const int level = chooseLevel(eta_prior, box, std::hypot(track.x[4], track.x[5]), dt);
     if (auto m = hornAtLevel(prev_gray, gray, box, pp_, level, dt, cfg_.horn)) res.measurements.push_back(*m);
     lap("horn");
-    const cv::Mat mask = robustMask(flow, box, pp_, cfg_.divergence);
+    const auto prev = fits_.find(track.id);
+    const bool has_prev = prev != fits_.end();
+    const auto [mask, used] = divergenceMask(flow, flow_q_, box, pp_, has_prev ? std::optional<AffineFit>(prev->second.first) : std::nullopt,
+                                             has_prev ? index_ - prev->second.second : 1 << 30, cfg_.divergence);
+    (void)used;
+    const auto fixed = flowMomentsFixed(flow_q_, box, pp_, cfg_.divergence.shrink, mask);
+    const std::optional<FlowMoments> moments = fixed ? std::optional<FlowMoments>(dequantiseMoments(*fixed)) : std::nullopt;
     const double rot = rotationDivergence(ego.R, K_, {box.cx(), box.cy()});
-    if (auto m = divergenceTtc(flowMoments(flow, box, pp_, mask, cfg_.divergence.shrink), box, rot, 1, dt, cfg_.divergence))
+    if (auto m = divergenceTtc(moments, box, rot, 1, dt, cfg_.divergence)) {
       res.measurements.push_back(*m);
+      if (auto fit = affineFromMoments(*moments)) fits_[track.id] = {*fit, index_};
+    }
   }
   lap("divergence");
   res.estimate = fusion_.update(track.id, t, dt, res.measurements);

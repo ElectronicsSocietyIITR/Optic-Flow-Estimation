@@ -1,6 +1,7 @@
 // Port of collision_avoidance/fcw/divergence.py.
 #include "fcw/divergence.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace fcw {
@@ -126,6 +127,86 @@ cv::Mat robustMask(const cv::Mat& flow, const Box& b, cv::Point2d pp, const Dive
   const int nx = (r->x2 - r->x1 + cfg.ransac_stride - 1) / cfg.ransac_stride;
   const int ny = (r->y2 - r->y1 + cfg.ransac_stride - 1) / cfg.ransac_stride;
   return ransac(flow, *r, pp, cfg, ransacSamples(nx * ny, cfg.ransac_iterations));
+}
+
+cv::Mat quantiseFlow(const cv::Mat& flow) {
+  cv::Mat q(flow.size(), CV_16SC2);
+  for (int y = 0; y < flow.rows; ++y)
+    for (int x = 0; x < flow.cols; ++x) {
+      const cv::Vec2f f = flow.at<cv::Vec2f>(y, x);
+      cv::Vec2s& o = q.at<cv::Vec2s>(y, x);
+      for (int c = 0; c < 2; ++c)
+        o[c] = static_cast<short>(std::clamp(std::nearbyint(f[c] * static_cast<float>(kFlowScale)), -32768.0f, 32767.0f));
+    }
+  return q;
+}
+
+std::optional<cv::Rect> flowRect(const Box& b, double shrink, int width, int height) {
+  const double mx = shrink / 2 * (b.x2 - b.x1), my = shrink / 2 * (b.y2 - b.y1);
+  const int x1 = std::max(0, static_cast<int>(std::ceil(b.x1 + mx))), y1 = std::max(0, static_cast<int>(std::ceil(b.y1 + my)));
+  const int x2 = std::min(width, static_cast<int>(std::floor(b.x2 - mx))), y2 = std::min(height, static_cast<int>(std::floor(b.y2 - my)));
+  if (x2 <= x1 || y2 <= y1) return std::nullopt;
+  return cv::Rect(x1, y1, x2 - x1, y2 - y1);
+}
+
+std::optional<FixedMoments> flowMomentsFixed(const cv::Mat& flow_q, const Box& b, cv::Point2d pp, double shrink, const cv::Mat& mask) {
+  const auto r = flowRect(b, shrink, flow_q.cols, flow_q.rows);
+  if (!r) return std::nullopt;
+  const int64_t px = static_cast<int64_t>(std::nearbyint(pp.x)), py = static_cast<int64_t>(std::nearbyint(pp.y));
+  FixedMoments m{};
+  for (int yy = r->y; yy < r->y + r->height; ++yy)
+    for (int xx = r->x; xx < r->x + r->width; ++xx) {
+      if (!mask.empty() && !mask.at<uchar>(yy, xx)) continue;
+      const int64_t x = xx - px, y = yy - py;
+      const cv::Vec2s f = flow_q.at<cv::Vec2s>(yy, xx);
+      const int64_t u = f[0], v = f[1];
+      const int64_t t[12] = {1, x, y, x * x, x * y, y * y, u, v, x * u, y * u, x * v, y * v};
+      for (int k = 0; k < 12; ++k) m[k] += t[k];
+    }
+  return m;
+}
+
+FlowMoments dequantiseMoments(const FixedMoments& m) {
+  FlowMoments out;
+  for (int k = 0; k < 12; ++k) out[k] = static_cast<double>(m[k]) / (k >= 6 ? kFlowScale : 1);
+  return out;
+}
+
+FitQ fitToFixed(const cv::Vec3d& a, const cv::Vec3d& b) {
+  const double s = static_cast<double>(kFlowScale) * (int64_t{1} << kFitShift);
+  auto q = [&](double c) { return static_cast<int64_t>(std::nearbyint(c * s)); };
+  return {q(a[0]), q(a[1]), q(a[2]), q(b[0]), q(b[1]), q(b[2])};
+}
+
+cv::Mat predictedMaskFixed(const cv::Mat& flow_q, const cv::Rect& r, cv::Point pp, const FitQ& f, int inlier_q) {
+  cv::Mat mask(r.size(), CV_8U);
+  const int64_t lim = static_cast<int64_t>(inlier_q) * inlier_q;
+  for (int yy = r.y; yy < r.y + r.height; ++yy)
+    for (int xx = r.x; xx < r.x + r.width; ++xx) {
+      const int64_t x = xx - pp.x, y = yy - pp.y;
+      const cv::Vec2s q = flow_q.at<cv::Vec2s>(yy, xx);
+      // >> on negative int64 is arithmetic (floor) in C++20 and in practice here, as numpy's right_shift.
+      const int64_t du = std::clamp<int64_t>(((static_cast<int64_t>(q[0]) << kFitShift) - (f.a0 + f.a1 * x + f.a2 * y)) >> kFitShift, -32767, 32767);
+      const int64_t dv = std::clamp<int64_t>(((static_cast<int64_t>(q[1]) << kFitShift) - (f.b0 + f.b1 * x + f.b2 * y)) >> kFitShift, -32767, 32767);
+      mask.at<uchar>(yy - r.y, xx - r.x) = du * du + dv * dv < lim;
+    }
+  return mask;
+}
+
+std::pair<cv::Mat, bool> divergenceMask(const cv::Mat& flow, const cv::Mat& flow_q, const Box& box, cv::Point2d pp,
+                                        const std::optional<AffineFit>& prev_fit, int fit_age, const DivergenceConfig& cfg) {
+  const auto r = flowRect(box, cfg.shrink, flow.cols, flow.rows);
+  if (prev_fit && fit_age <= cfg.max_fit_age && r) {
+    const cv::Point ppi(static_cast<int>(std::nearbyint(pp.x)), static_cast<int>(std::nearbyint(pp.y)));
+    const cv::Mat inside = predictedMaskFixed(flow_q, *r, ppi, fitToFixed(prev_fit->first, prev_fit->second),
+                                              static_cast<int>(std::nearbyint(cfg.inlier_px * kFlowScale)));
+    if (cv::countNonZero(inside) >= cfg.min_inlier_share * inside.total()) {
+      cv::Mat mask = cv::Mat::zeros(flow.size(), CV_8U);
+      inside.copyTo(mask(*r));
+      return {mask, true};
+    }
+  }
+  return {robustMask(flow, box, pp, cfg), false};
 }
 
 }  // namespace fcw
