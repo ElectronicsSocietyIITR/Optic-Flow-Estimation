@@ -123,13 +123,19 @@ int main(int argc, char** argv) {
         cv::waitKey(1);
       }
     });
+    const auto wall_start = std::chrono::steady_clock::now();
     const fcw::RuntimeStats stats = runtime.run();
+    const double wall_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - wall_start).count();
     std::cout << fcw::summaryLine(levels, totals) << " | dropped " << stats.dropped << "\n";
     if (levels.size() > 1) {
       std::cout << "mean ms/frame by step:";
       for (const auto& [k, v] : stage_sum) std::printf(" %s=%.2f", k.c_str(), v / (levels.size() - 1));
       std::cout << "\n";
     }
+    // Stages overlap (capture, flow || detection, frame stage, object stage, render): throughput is set by
+    // the slowest stage, not the sum of the steps above; "total" is a frame's time through perception.
+    std::printf("throughput %.1f FPS (%d frames in %.2f s wall, %d object workers)\n", stats.processed / wall_s, stats.processed,
+                wall_s, cfg.object_workers);
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "fcw_app: " << e.what() << "\n";

@@ -88,3 +88,31 @@ TEST(Pipeline, ReportsTimePerPerceptionStep) {
   for (const char* key : {"flow", "detection", "track", "ego", "looming", "scale", "horn", "divergence", "fusion_course", "warn", "total"})
     EXPECT_TRUE(last.timings_ms.count(key)) << key;
 }
+
+TEST(Runtime, MatchesTheSerialPipelineFrameByFrame) {
+  // Four stages (capture, flow || detection, frame stage, object stage) must not change any result.
+  // One video for both runs: syntheticSource draws from OpenCV's global RNG, so a second call differs.
+  std::vector<fcw::CapturedFrame> video;
+  for (auto src = syntheticSource(25); auto f = src();) video.push_back(*f);
+  auto replay = [&video, i = std::make_shared<size_t>(0)]() -> std::optional<fcw::CapturedFrame> {
+    return *i < video.size() ? std::optional<fcw::CapturedFrame>(video[(*i)++]) : std::nullopt;
+  };
+  std::vector<fcw::FcwFrame> threaded;
+  fcw::RuntimeOptions opt;
+  opt.live = false;
+  fcw::Runtime rt(fcw::FcwConfig{}, opt, replay, oneCar(), fcw::disFlow(), [&](const fcw::FcwFrame& f) { threaded.push_back(f); });
+  rt.run();
+  fcw::FcwPipeline serial(fcw::FcwConfig{}, oneCar(), fcw::disFlow());
+  ASSERT_EQ(threaded.size(), 25u);
+  for (const fcw::FcwFrame& t : threaded) {
+    const fcw::CapturedFrame* f = &video[t.index];
+    const fcw::FcwFrame s = serial.process(f->bgr, f->t);
+    EXPECT_EQ(s.ego.rvec, t.ego.rvec) << t.index;
+    EXPECT_EQ(s.level(), t.level()) << t.index;
+    ASSERT_EQ(s.objects.size(), t.objects.size()) << t.index;
+    for (size_t o = 0; o < s.objects.size(); ++o) {
+      ASSERT_EQ(s.objects[o].estimate.has_value(), t.objects[o].estimate.has_value()) << t.index;
+      if (s.objects[o].estimate) EXPECT_EQ(s.objects[o].estimate->eta, t.objects[o].estimate->eta) << t.index;
+    }
+  }
+}

@@ -1,4 +1,5 @@
-// Four-thread runtime (spec section 3): T1 capture -> T2 accelerators -> T3 perception -> T4 render.
+// Runtime (spec section 5): T1 capture -> T2 accelerators (flow || detection) -> T3a frame stage
+// -> T3b object stage (worker pool) -> T4 render, on bounded queues.
 // Frames are dropped only at T1 (oldest first, live sources only): T2 computes flow between
 // consecutive frames, so a drop after T2 would pair flow with the wrong previous frame.
 #pragma once
@@ -85,6 +86,7 @@ struct RuntimeOptions {
   bool live = false;      // live camera: drop oldest at T1; file: never drop
   size_t capture_queue = 2;
   size_t work_queue = 2;
+  size_t perception_queue = 2;  // frame stage -> object stage
   size_t render_queue = 4;
 };
 

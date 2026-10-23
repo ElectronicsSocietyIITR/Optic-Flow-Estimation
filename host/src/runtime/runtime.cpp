@@ -3,6 +3,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <cstdio>
+#include <future>
 #include <numeric>
 #include <thread>
 
@@ -26,6 +27,7 @@ Runtime::Runtime(FcwConfig cfg, RuntimeOptions opt, CaptureSource source, Detect
 RuntimeStats Runtime::run() {
   BoundedQueue<CapturedFrame> captured(opt_.capture_queue);
   BoundedQueue<Work> work(opt_.work_queue);
+  BoundedQueue<FrameState> perceived(opt_.perception_queue);
   BoundedQueue<FcwFrame> rendered(opt_.render_queue);
   RuntimeStats stats;
 
@@ -49,22 +51,31 @@ RuntimeStats Runtime::run() {
       w.t = f->t;
       cv::Mat gray;
       cv::cvtColor(w.bgr, gray, cv::COLOR_BGR2GRAY);
+      // Flow and detection are independent (the fabric's LK and the DPU on the board): run them together.
+      auto dets = std::async(std::launch::async, [&] { return detector_(w.bgr); });
       if (!prev_gray.empty()) w.flow = flow_(prev_gray, gray);
-      w.detections = detector_(w.bgr);
+      w.detections = dets.get();
       prev_gray = gray;
       work.pushBlocking(std::move(w));
     }
     work.close();
   });
 
-  std::thread t3([&] {  // perception: the pipeline consumes T2's results
-    const Work* current = nullptr;
-    FcwPipeline pipe(
-        cfg_, [&](const cv::Mat&) { return current->detections; },
-        [&](const cv::Mat&, const cv::Mat&) { return current->flow; });
+  // Perception in two stages on one pipeline: the frame stage of N+1 overlaps the object stage of N
+  // (they touch disjoint state; see FcwPipeline::frameStage).
+  const Work* current = nullptr;
+  FcwPipeline pipe(
+      cfg_, [&](const cv::Mat&) { return current->detections; }, [&](const cv::Mat&, const cv::Mat&) { return current->flow; });
+  std::thread t3a([&] {  // frame stage: tracker || ego-rotation
     while (auto w = work.pop()) {
       current = &*w;
-      rendered.pushBlocking(pipe.process(w->bgr, w->t));
+      perceived.pushBlocking(pipe.frameStage(w->bgr, w->t));
+    }
+    perceived.close();
+  });
+  std::thread t3b([&] {  // object stage: per-object TTC on the worker pool, lead selection, warnings
+    while (auto s = perceived.pop()) {
+      rendered.pushBlocking(pipe.objectStage(std::move(*s)));
       ++stats.processed;
     }
     rendered.close();
@@ -73,7 +84,8 @@ RuntimeStats Runtime::run() {
   while (auto f = rendered.pop()) sink_(*f);  // T4: render / output on the calling thread
   t1.join();
   t2.join();
-  t3.join();
+  t3a.join();
+  t3b.join();
   stats.max_capture_queue = static_cast<int>(captured.maxSize());
   return stats;
 }
