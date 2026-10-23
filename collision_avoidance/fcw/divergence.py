@@ -25,6 +25,8 @@ class DivergenceConfig:
     ransac_iterations: int = 64
     ransac_stride: int = 2       # subsample pixels for the RANSAC hypotheses
     min_pixels: int = 50
+    min_inlier_share: float = 0.5  # predicted-fit mask below this share of the box: fall back to RANSAC
+    max_fit_age: int = 1           # frames: only last frame's fit predicts this frame's flow
 
 
 def flow_moments(flow: np.ndarray, box, principal_point, mask: np.ndarray | None = None, shrink: float = 0.10) -> np.ndarray | None:
@@ -55,7 +57,8 @@ def quantise_flow(flow: np.ndarray) -> np.ndarray:
     return np.clip(np.round(flow * FLOW_SCALE), -32768, 32767).astype(np.int16)
 
 
-def flow_moments_fixed(flow_q: np.ndarray, box, principal_point, shrink: float = 0.10) -> np.ndarray | None:
+def flow_moments_fixed(flow_q: np.ndarray, box, principal_point, shrink: float = 0.10,
+                       mask: np.ndarray | None = None) -> np.ndarray | None:
     """The 12 FLOW_TERMS as exact int64 sums (u, v in 1/FLOW_SCALE px; x, y from the rounded principal point).
 
     Golden model of the PL engine's flow-moment accumulators. Divide the u/v terms
@@ -73,8 +76,64 @@ def flow_moments_fixed(flow_q: np.ndarray, box, principal_point, shrink: float =
     x, y = (xs - px).astype(np.int64), (ys - py).astype(np.int64)
     u = flow_q[iy1:iy2, ix1:ix2, 0].astype(np.int64)
     v = flow_q[iy1:iy2, ix1:ix2, 1].astype(np.int64)
+    if mask is not None:
+        keep = mask[iy1:iy2, ix1:ix2]
+        x, y, u, v = x[keep], y[keep], u[keep], v[keep]
     return np.array([x.size, x.sum(), y.sum(), (x * x).sum(), (x * y).sum(), (y * y).sum(),
                      u.sum(), v.sum(), (x * u).sum(), (y * u).sum(), (x * v).sum(), (y * v).sum()], dtype=np.int64)
+
+
+def dequantise_moments(m_fixed: np.ndarray) -> np.ndarray:
+    """flow_moments_fixed -> flow_moments units (u, v terms back to px)."""
+    m = m_fixed.astype(np.float64)
+    m[6:] /= FLOW_SCALE
+    return m
+
+
+FIT_SHIFT = 16  # fraction bits of the fixed-point affine fit
+FitQ = tuple[int, int, int, int, int, int]
+
+
+def fit_to_fixed(a: np.ndarray, b: np.ndarray) -> FitQ:
+    """Affine fit (a0, a1, a2), (b0, b1, b2) in px and px/px -> int64 in 1/FLOW_SCALE px, scaled by 2^FIT_SHIFT."""
+    s = FLOW_SCALE * (1 << FIT_SHIFT)
+    return tuple(int(np.round(float(c) * s)) for c in (*a, *b))
+
+
+def predicted_mask_fixed(flow_q: np.ndarray, rect, principal_point_int, fit_q: FitQ, inlier_q: int) -> np.ndarray:
+    """Inliers of a predicted affine flow over rect = (x1, y1, x2, y2), exactly as the PL engine decides them.
+
+    Prediction P = a0 + a1 x + a2 y in int64 (row by row it only grows by a1: adders in
+    hardware); residual = ((u << FIT_SHIFT) - P) >> FIT_SHIFT in 1/FLOW_SCALE px, clamped to
+    int16; inlier when du^2 + dv^2 < inlier_q^2 (the same 1 px test as robust_mask).
+    """
+    x1, y1, x2, y2 = rect
+    ys, xs = np.mgrid[y1:y2, x1:x2]
+    x, y = (xs - principal_point_int[0]).astype(np.int64), (ys - principal_point_int[1]).astype(np.int64)
+    a0, a1, a2, b0, b1, b2 = (np.int64(c) for c in fit_q)
+    u = flow_q[y1:y2, x1:x2, 0].astype(np.int64) << FIT_SHIFT
+    v = flow_q[y1:y2, x1:x2, 1].astype(np.int64) << FIT_SHIFT
+    du = np.clip((u - (a0 + a1 * x + a2 * y)) >> FIT_SHIFT, -32767, 32767)
+    dv = np.clip((v - (b0 + b1 * x + b2 * y)) >> FIT_SHIFT, -32767, 32767)
+    return du * du + dv * dv < np.int64(inlier_q) * inlier_q
+
+
+def divergence_mask(flow: np.ndarray, flow_q: np.ndarray, box, principal_point, prev_fit, fit_age: int,
+                    cfg: DivergenceConfig = DivergenceConfig()) -> tuple[np.ndarray, bool]:
+    """Object pixels in the box: last frame's fit predicts them; RANSAC when there is no usable fit.
+
+    Returns (mask over the frame, whether the prediction was used).
+    """
+    h, w = flow.shape[:2]
+    rect = flow_rect(box, cfg.shrink, w, h)
+    if prev_fit is not None and fit_age <= cfg.max_fit_age and rect is not None:
+        pp = (int(round(principal_point[0])), int(round(principal_point[1])))
+        inside = predicted_mask_fixed(flow_q, rect, pp, fit_to_fixed(*prev_fit), int(round(cfg.inlier_px * FLOW_SCALE)))
+        if inside.mean() >= cfg.min_inlier_share:
+            mask = np.zeros((h, w), bool)
+            mask[rect[1]:rect[3], rect[0]:rect[2]] = inside
+            return mask, True
+    return robust_mask(flow, box, principal_point, cfg), False
 
 
 def flow_rect(box, shrink: float, width: int, height: int) -> tuple[int, int, int, int] | None:

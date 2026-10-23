@@ -16,7 +16,8 @@ import numpy as np
 from ..tracking import Detection
 from .closing import ClosingConfig, ClosingTracker, road_constant, static_ttc
 from .collision import CLASS_WIDTH_M, CourseChecker, CourseConfig, CourseResult, Level, WarningConfig, WarningFsm
-from .divergence import DivergenceConfig, divergence_ttc, flow_moments, robust_mask
+from .divergence import (DivergenceConfig, affine_from_moments, dequantise_moments, divergence_mask, divergence_ttc,
+                         flow_moments_fixed, quantise_flow)
 from .ego_rotation import EgoMotion, EgoRotationConfig, EgoRotationEstimator, rotation_divergence
 from .fusion import FusionConfig, TtcEstimate, TtcFusion
 from .horn import HornConfig, choose_level, horn_at_level
@@ -118,6 +119,7 @@ class FcwPipeline:
         self._in_path_streak: dict[int, int] = {}
         self._entry_streak: dict[int, int] = {}
         self.closing = ClosingTracker(cfg.closing)
+        self._fits: dict[int, tuple[np.ndarray, np.ndarray, int]] = {}  # track -> last affine flow fit (a, b, frame)
 
     def process(self, frame_bgr: np.ndarray, t: float) -> FcwFrame:
         timings: dict[str, float] = {}
@@ -151,12 +153,14 @@ class FcwPipeline:
 
         mark = time.perf_counter()
         selected = self._select(tracks)
-        objects = [self._assess(track, gray, prev_gray, flow, ego, heading, yaw_rate, t, dt) for track in selected]
+        flow_q = quantise_flow(flow)  # divergence runs on the PL engine's flow format
+        objects = [self._assess(track, gray, prev_gray, flow, flow_q, ego, heading, yaw_rate, t, dt) for track in selected]
         self._warn(objects, {tr.id: tr for tr in selected}, flow, ego, dt)
         live = list(tracks)
         self.fusion.retain(live)
         self.course.retain(live)
         self.closing.retain(live)
+        self._fits = {tid: f for tid, f in self._fits.items() if tid in tracks}
         self.fsms = {tid: f for tid, f in self.fsms.items() if tid in tracks}
         self._in_path_streak = {tid: n for tid, n in self._in_path_streak.items() if tid in tracks}
         self._entry_streak = {tid: n for tid, n in self._entry_streak.items() if tid in tracks}
@@ -185,7 +189,7 @@ class FcwPipeline:
                 return time_s, gray
         return None
 
-    def _assess(self, track, gray, prev_gray, flow, ego, heading, yaw_rate, t, dt) -> ObjectResult:
+    def _assess(self, track, gray, prev_gray, flow, flow_q, ego, heading, yaw_rate, t, dt) -> ObjectResult:
         cfg = self.cfg
         box = track.bbox
         prior = self.fusion.filters.get(track.id)
@@ -203,12 +207,18 @@ class FcwPipeline:
             m = horn_at_level(prev_gray, gray, box, self.pp, level, dt, cfg.horn)
             if m is not None:
                 measurements.append(m)
-            mask = robust_mask(flow, box, self.pp, cfg.divergence)
+            prev = self._fits.get(track.id)
+            mask, _ = divergence_mask(flow, flow_q, box, self.pp, prev[:2] if prev else None,
+                                      self._index - prev[2] if prev else 1 << 30, cfg.divergence)
+            fixed = flow_moments_fixed(flow_q, box, self.pp, cfg.divergence.shrink, mask)
+            moments = None if fixed is None else dequantise_moments(fixed)
             center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
-            m = divergence_ttc(flow_moments(flow, box, self.pp, mask, cfg.divergence.shrink), box,
-                               rotation_divergence(ego.R, self.K, center), 1, dt, cfg.divergence)
+            m = divergence_ttc(moments, box, rotation_divergence(ego.R, self.K, center), 1, dt, cfg.divergence)
             if m is not None:
                 measurements.append(m)
+                fit = affine_from_moments(moments)
+                if fit is not None:
+                    self._fits[track.id] = (*fit, self._index)
         estimate = self.fusion.update(track.id, t, dt, measurements)
         ttc = estimate.ttc_s if estimate else None
         course = self.course.update(track.id, t, box, track.class_name, heading[0], heading[1], ttc, yaw_rate,
