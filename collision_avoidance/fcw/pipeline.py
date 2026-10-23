@@ -56,6 +56,15 @@ class FcwConfig:
         return intrinsics(self.fx, self.frame_width, self.frame_height, self.fy)
 
 
+def bgr_to_gray(frame: np.ndarray) -> np.ndarray:
+    """(4899 R + 9617 G + 1868 B + 2^13) >> 14: the preprocessing kernel's gray, bit for bit.
+
+    cv2.cvtColor gives the same up to 1 level, but its rounding depends on the OpenCV build.
+    """
+    b, g, r = (frame[..., i].astype(np.int32) for i in range(3))
+    return ((4899 * r + 9617 * g + 1868 * b + 8192) >> 14).astype(np.uint8)
+
+
 def processing_size(width: int, height: int, target_width: int = 512) -> tuple[int, int]:
     """Processing frame for a source: target_width wide, the source aspect, height a multiple of 32 in [64, 512].
 
@@ -162,7 +171,7 @@ class FcwPipeline:
         if self._prev_t is None or t > self._prev_t:  # never move the clock backwards
             self._prev_t = t
         frame = cv2.resize(frame_bgr, (self.cfg.frame_width, self.cfg.frame_height))
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = bgr_to_gray(frame)
         prev_gray = self.ring[-1][2] if self.ring else None
 
         mark = time.perf_counter()

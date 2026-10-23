@@ -539,7 +539,7 @@ def export_hls(out: Path) -> None:
                        (256, 192), HornConfig())
     fits = {"masked": [fit_to_fixed(fa, fb), None]}
     # Horn at pyramid level 1: the engine sees the level's images, boxes and principal point.
-    lv = [cv2.pyrDown(scene.frames[19]), cv2.pyrDown(scene.frames[20])]
+    lv = [cv2.pyrDown(f, borderType=cv2.BORDER_REPLICATE) for f in (scene.frames[19], scene.frames[20])]  # = Vitis pyrDown
     cases["level1"] = (lv[0], lv[1], np.zeros((*lv[0].shape, 2), np.int16), [tuple(np.asarray(scene.boxes[20]) / 2)], (128, 96), HornConfig())
     for name, (prev, curr, flow_q, boxes, pp, cfg) in cases.items():
         d = root / name

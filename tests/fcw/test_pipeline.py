@@ -224,3 +224,22 @@ def test_config_for_source_keeps_pixels_square():
     assert cfg.K[1, 1] == pytest.approx(200.0)                 # 16:9 into 16:9: square pixels
     kitti = config_for_source(1242, 375, fx=200.0)
     assert kitti.K[1, 1] == pytest.approx(200.0 * (160 / 375) / (512 / 1242))
+
+
+def test_bgr_to_gray_is_the_fabric_formula():
+    # (4899 R + 9617 G + 1868 B + 2^13) >> 14, as the preprocessing kernel computes it; cv2.cvtColor's
+    # rounding depends on the OpenCV build (its fast paths), so the PC must not rely on it.
+    from collision_avoidance.fcw.pipeline import bgr_to_gray
+    bgr = np.random.default_rng(0).integers(0, 256, (64, 80, 3), dtype=np.uint8)
+    b, g, r = (bgr[..., i].astype(np.int64) for i in range(3))
+    assert np.array_equal(bgr_to_gray(bgr), ((4899 * r + 9617 * g + 1868 * b + 8192) >> 14).astype(np.uint8))
+    assert np.abs(bgr_to_gray(bgr).astype(int) - cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)).max() <= 1
+    flat = np.repeat(np.arange(256, dtype=np.uint8)[None, :, None], 3, axis=2)
+    assert np.array_equal(bgr_to_gray(flat)[0], np.arange(256))   # gray input stays exactly itself
+
+
+def test_horn_pyramid_matches_the_fabric_pyrdown():
+    # Vitis pyrDown equals cv2.pyrDown with replicated borders (C-simulation, hls/preprocess).
+    from collision_avoidance.fcw.horn import downsample
+    img = np.random.default_rng(1).integers(0, 256, (96, 128), dtype=np.uint8)
+    assert np.array_equal(downsample(img, 1), cv2.pyrDown(img, borderType=cv2.BORDER_REPLICATE))

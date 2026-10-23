@@ -75,7 +75,7 @@ int chooseLevel(std::optional<double> eta, const Box& b, double speed, double dt
 
 cv::Mat downsample(const cv::Mat& gray, int level) {
   cv::Mat out = gray;
-  for (int i = 0; i < level; ++i) cv::pyrDown(out, out);
+  for (int i = 0; i < level; ++i) cv::pyrDown(out, out, cv::Size(), cv::BORDER_REPLICATE);  // = the fabric's Vitis pyrDown
   return out;
 }
 

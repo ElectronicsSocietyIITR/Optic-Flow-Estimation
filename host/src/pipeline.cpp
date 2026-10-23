@@ -54,6 +54,16 @@ FcwPipeline::FcwPipeline(FcwConfig cfg, DetectorFn detector, FlowSource flow)
       closing_(cfg_.closing),
       engine_(std::make_unique<SoftwareMomentEngine>(cfg_.horn, cfg_.divergence)) {}
 
+cv::Mat bgrToGray(const cv::Mat& bgr) {
+  cv::Mat gray(bgr.size(), CV_8U);
+  for (int y = 0; y < bgr.rows; ++y) {
+    const cv::Vec3b* in = bgr.ptr<cv::Vec3b>(y);
+    uchar* out = gray.ptr<uchar>(y);
+    for (int x = 0; x < bgr.cols; ++x) out[x] = static_cast<uchar>((4899 * in[x][2] + 9617 * in[x][1] + 1868 * in[x][0] + 8192) >> 14);
+  }
+  return gray;
+}
+
 cv::Size processingSize(int width, int height, int target_width) {
   const int h = static_cast<int>(std::nearbyint(static_cast<double>(target_width) * height / width / 32.0)) * 32;  // half to even, as Python
   return {target_width, std::clamp(h, 64, 512)};
@@ -72,7 +82,7 @@ FrameState FcwPipeline::frameStage(const cv::Mat& frame_bgr, double t) {
   const cv::Size size(cfg_.frame_width, cfg_.frame_height);
   if (frame_bgr.size() == size) out.frame = frame_bgr;  // already prepared (the runtime's T2 resized it)
   else cv::resize(frame_bgr, out.frame, size);
-  cv::cvtColor(out.frame, s.gray, cv::COLOR_BGR2GRAY);
+  s.gray = bgrToGray(out.frame);
   s.prev_gray = ring_.empty() ? cv::Mat() : std::get<2>(ring_.back());
 
   auto mark = std::chrono::steady_clock::now();

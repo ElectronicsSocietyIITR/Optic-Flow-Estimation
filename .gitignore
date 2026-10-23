@@ -34,3 +34,5 @@ deploy/vitis_ai/compiled*/
 host/tests/golden_local/
 third_party/
 hls/lk_ref/build/
+hls/preprocess/build/
+hls/preprocess/build_frame.png

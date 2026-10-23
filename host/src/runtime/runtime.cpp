@@ -50,7 +50,7 @@ RuntimeStats Runtime::run() {
       cv::resize(f->bgr, w.bgr, cv::Size(cfg_.frame_width, cfg_.frame_height));
       w.t = f->t;
       cv::Mat gray;
-      cv::cvtColor(w.bgr, gray, cv::COLOR_BGR2GRAY);
+      gray = bgrToGray(w.bgr);
       // Flow and detection are independent (the fabric's LK and the DPU on the board): run them together.
       auto dets = std::async(std::launch::async, [&] { return detector_(w.bgr); });
       if (!prev_gray.empty()) w.flow = flow_(prev_gray, gray);

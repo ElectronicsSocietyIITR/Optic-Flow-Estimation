@@ -13,12 +13,13 @@ import json
 import math
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from collision_avoidance.fcw import metrics
 from collision_avoidance.fcw.collision import Level
 from collision_avoidance.fcw.measurement import METHODS
-from collision_avoidance.fcw.pipeline import FcwConfig, FcwPipeline, make_flow, processing_size
+from collision_avoidance.fcw.pipeline import FcwConfig, FcwPipeline, bgr_to_gray, make_flow, processing_size
 from collision_avoidance.telemetry import start_run
 from collision_avoidance.tracking import iou
 from ttc_esn import evttc
@@ -50,7 +51,16 @@ def evaluate_sequence(seq_dir: Path, detector, warmup: int = 20, cfg: FcwConfig 
     cfg = cfg or config_for_evttc()
     scale = np.array([cfg.frame_width / PANEL_W, cfg.frame_height / PANEL_H] * 2)
     anchors = np.array(sorted(annotations))
-    pipeline = FcwPipeline(cfg, detector, make_flow(flow))
+    flow_source = make_flow(flow)
+    if flow == "vitis":  # the kernel is slow in C-simulation: compute every pair the pipeline will ask for, in parallel
+        grays = []
+        for index, panel in evttc.iter_left_frames(seq_dir / "video.mp4"):
+            if index > last:
+                break
+            if index >= first - warmup:
+                grays.append(bgr_to_gray(cv2.resize(panel, (cfg.frame_width, cfg.frame_height))))
+        flow_source.prefill(list(zip(grays, grays[1:])))
+    pipeline = FcwPipeline(cfg, detector, flow_source)
 
     rows = []
     for index, panel in evttc.iter_left_frames(seq_dir / "video.mp4"):

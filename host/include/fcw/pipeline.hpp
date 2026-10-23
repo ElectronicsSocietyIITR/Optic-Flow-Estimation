@@ -94,6 +94,9 @@ struct FrameState {
 
 // PC stand-in for the board's dense LK: OpenCV DIS optical flow (medium preset).
 FlowSource disFlow();
+// (4899 R + 9617 G + 1868 B + 2^13) >> 14: the preprocessing kernel's gray, bit for bit (cvtColor's
+// rounding depends on the OpenCV build).
+cv::Mat bgrToGray(const cv::Mat& bgr);
 // Processing frame for a source: target_width wide, the source aspect, height a multiple of 32 in [64, 512].
 cv::Size processingSize(int width, int height, int target_width = 512);
 

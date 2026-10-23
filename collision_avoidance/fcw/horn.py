@@ -106,8 +106,9 @@ def choose_level(eta_estimate: float | None, box, center_speed_px_s: float, dt: 
 
 
 def downsample(gray: np.ndarray, level: int) -> np.ndarray:
+    """Gaussian pyramid level, replicated borders: exactly the fabric's Vitis pyrDown (hls/preprocess)."""
     for _ in range(level):
-        gray = cv2.pyrDown(gray)
+        gray = cv2.pyrDown(gray, borderType=cv2.BORDER_REPLICATE)
     return gray
 
 
