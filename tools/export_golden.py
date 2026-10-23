@@ -551,7 +551,57 @@ def export_hls(out: Path) -> None:
         print("wrote", d)
 
 
-EXPORTERS = {"hls": export_hls, "harness": export_harness, "tracker": export_tracker, "ego": export_ego, "scale": export_scale, "horn": export_horn,
+YOLO_CLASSES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+
+
+def export_yolo(out: Path) -> None:
+    """Raw YOLOv9t head maps (what the DPU returns) on 3 dash-cam frames, and the six-class decode + NMS.
+
+    The reference scores only the six collision classes, as the board decoder does. Too large
+    for git: written to golden_local/.
+    """
+    import sys as _sys
+    import torch
+    import torchvision
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "deploy" / "vitis_ai"))
+    import yolo_dpu
+
+    local = out.parent / "golden_local"
+    local.mkdir(parents=True, exist_ok=True)
+    graph = yolo_dpu.load("yolov9t.pt")
+    cap = cv2.VideoCapture("data/normal_driving/241220_125301_002_FH.MP4")
+    ids = list(YOLO_CLASSES)
+    w = Writer(local, "yolo")
+    frames = 0
+    for i in range(90):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if i % 30:
+            continue
+        bgr = cv2.resize(frame, (512, 384), interpolation=cv2.INTER_AREA)
+        with torch.no_grad():
+            raw = graph(yolo_dpu.preprocess(bgr))
+            pred = yolo_dpu.decode(raw, graph.head)[0].T            # (N, 4 + 80)
+        k = f"f{frames}"
+        for j, r in enumerate(raw):                                  # NHWC rows: (H*W, 144)
+            c, h, wd = r.shape[1:]
+            w.mat(f"{k}_head{j}", r[0].permute(1, 2, 0).reshape(h * wd, c).numpy().astype(np.float64))
+            w.num(f"{k}_head{j}_h", h)
+            w.num(f"{k}_head{j}_w", wd)
+        scores, which = pred[:, 4:][:, ids].max(dim=1)
+        keep = scores > 0.5
+        xy, wh = pred[keep, :2], pred[keep, 2:4]
+        boxes = torch.cat((xy - wh / 2, xy + wh / 2), dim=1)
+        cls = torch.tensor(ids)[which[keep]]
+        idx = torchvision.ops.batched_nms(boxes, scores[keep], cls, 0.7)
+        w.mat(f"{k}_dets", torch.cat((boxes[idx], scores[keep][idx, None], cls[idx, None].float()), 1).numpy().astype(np.float64).reshape(-1, 6))
+        frames += 1
+    w.num("frames", frames)
+    w.close()
+
+
+EXPORTERS = {"yolo": export_yolo, "hls": export_hls, "harness": export_harness, "tracker": export_tracker, "ego": export_ego, "scale": export_scale, "horn": export_horn,
              "divergence": export_divergence, "fusion": export_fusion, "collision": export_collision, "pipeline": export_pipeline}
 
 
