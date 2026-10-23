@@ -51,7 +51,8 @@ FcwPipeline::FcwPipeline(FcwConfig cfg, DetectorFn detector, FlowSource flow)
       ego_(K_, cfg_.ego),
       fusion_(cfg_.fusion),
       course_(cfg_.course),
-      closing_(cfg_.closing) {}
+      closing_(cfg_.closing),
+      engine_(std::make_unique<SoftwareMomentEngine>(cfg_.horn, cfg_.divergence)) {}
 
 cv::Size processingSize(int width, int height, int target_width) {
   const int h = static_cast<int>(std::nearbyint(static_cast<double>(target_width) * height / width / 32.0)) * 32;  // half to even, as Python
@@ -121,11 +122,32 @@ FcwFrame FcwPipeline::objectStage(FrameState s) {
   const cv::Mat flow_q = quantiseFlow(out.flow);  // divergence runs on the PL engine's flow format
 
   const int n = static_cast<int>(selected.size());
+  // Option A: one engine call for every box, after the tracker, when each box's pyramid level and last
+  // frame's fit are known; the workers then only solve.
+  std::vector<BoxSums> sums;
+  std::vector<bool> fit_used(n, false);
+  if (!s.prev_gray.empty()) {
+    const auto engine_mark = std::chrono::steady_clock::now();
+    std::vector<EngineBox> boxes(n);
+    for (int i = 0; i < n; ++i) {
+      const ScaleTrack& tr = *selected[i];
+      const EtaFilter* prior = fusion_.filter(tr.id);
+      boxes[i].box = tr.bbox();
+      boxes[i].level = chooseLevel(prior ? prior->eta : std::nullopt, boxes[i].box, std::hypot(tr.x[4], tr.x[5]), out.dt_s);
+      const auto fit = fits_.find(tr.id);
+      if (fit != fits_.end() && out.index - fit->second.second <= cfg_.divergence.max_fit_age) {
+        boxes[i].fit = fitToFixed(fit->second.first.first, fit->second.first.second);
+        fit_used[i] = true;
+      }
+    }
+    sums = engine_->run(s.prev_gray, s.gray, flow_q, boxes, pp_);
+    out.timings_ms["engine"] = msSince(engine_mark);
+  }
   std::vector<ObjectResult> objects(n);
   std::vector<std::map<std::string, double>> timings(n);
   std::vector<std::optional<AffineFit>> fits(n);
   if (!pool_ && cfg_.object_workers > 0) pool_ = std::make_unique<ThreadPool>(cfg_.object_workers);
-  auto one = [&](int i) { objects[i] = assess(*selected[i], s, flow_q, timings[i], fits[i]); };
+  auto one = [&](int i) { objects[i] = assess(*selected[i], s, flow_q, sums.empty() ? nullptr : &sums[i], fit_used[i], timings[i], fits[i]); };
   if (pool_) {
     pool_->parallelFor(n, one);
   } else {
@@ -179,7 +201,7 @@ std::optional<std::pair<double, cv::Mat>> frameAt(const std::deque<std::tuple<in
 }
 }  // namespace
 
-ObjectResult FcwPipeline::assess(const ScaleTrack& track, const FrameState& s, const cv::Mat& flow_q,
+ObjectResult FcwPipeline::assess(const ScaleTrack& track, const FrameState& s, const cv::Mat& flow_q, const BoxSums* sums, bool fit_used,
                                  std::map<std::string, double>& timings, std::optional<AffineFit>& new_fit) {
   const FcwFrame& f = s.out;
   const double t = f.time_s, dt = f.dt_s;
@@ -207,15 +229,18 @@ ObjectResult FcwPipeline::assess(const ScaleTrack& track, const FrameState& s, c
       if (auto m = scaleTtc(s.gray, past->second, box, *box_tk, k, (t - past->first) / k, cfg_.scale)) res.measurements.push_back(*m);
     }
     lap("scale");
-    const int level = chooseLevel(eta_prior, box, std::hypot(track.x[4], track.x[5]), dt);
-    if (auto m = hornAtLevel(s.prev_gray, s.gray, box, pp_, level, dt, cfg_.horn)) res.measurements.push_back(*m);
+    if (sums && sums->horn)
+      if (auto m = hornSolve(*sums->horn, dt, cfg_.horn)) res.measurements.push_back(*m);
     lap("horn");
-    const auto prev = fits_.find(track.id);  // read only: fits_ is written after the parallel section
-    const bool has_prev = prev != fits_.end();
-    const auto [mask, used] = divergenceMask(f.flow, flow_q, box, pp_, has_prev ? std::optional<AffineFit>(prev->second.first) : std::nullopt,
-                                             has_prev ? f.index - prev->second.second : 1 << 30, cfg_.divergence);
-    (void)used;
-    const auto fixed = flowMomentsFixed(flow_q, box, pp_, cfg_.divergence.shrink, mask);
+    // Engine moments over last frame's fit inliers, if enough of the box follows it (divergenceMask's
+    // rule); otherwise RANSAC here, in software.
+    std::optional<FixedMoments> fixed;
+    const auto rect = flowRect(box, cfg_.divergence.shrink, flow_q.cols, flow_q.rows);
+    if (fit_used && rect && sums && sums->flow && (*sums->flow)[0] >= cfg_.divergence.min_inlier_share * rect->area()) {
+      fixed = sums->flow;
+    } else {
+      fixed = flowMomentsFixed(flow_q, box, pp_, cfg_.divergence.shrink, robustMask(f.flow, box, pp_, cfg_.divergence));
+    }
     const std::optional<FlowMoments> moments = fixed ? std::optional<FlowMoments>(dequantiseMoments(*fixed)) : std::nullopt;
     const double rot = rotationDivergence(f.ego.R, K_, {box.cx(), box.cy()});
     if (auto m = divergenceTtc(moments, box, rot, 1, dt, cfg_.divergence)) {

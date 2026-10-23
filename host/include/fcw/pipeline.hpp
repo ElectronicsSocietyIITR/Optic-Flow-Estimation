@@ -22,6 +22,7 @@
 #include "fcw/ego_rotation.hpp"
 #include "fcw/fusion.hpp"
 #include "fcw/horn.hpp"
+#include "fcw/moment_engine.hpp"
 #include "fcw/scale_search.hpp"
 #include "fcw/thread_pool.hpp"
 #include "fcw/tracker.hpp"
@@ -108,13 +109,16 @@ class FcwPipeline {
   // lead selection and the warning state machines. Frames must arrive in order.
   FcwFrame objectStage(FrameState s);
   const ScaleTracker& tracker() const { return tracker_; }
+  // The Horn / moment engine: software by default, the PL engine on the board.
+  void setMomentEngine(std::unique_ptr<MomentEngine> engine) { engine_ = std::move(engine); }
   const FcwConfig& config() const { return cfg_; }
 
  private:
   std::vector<const ScaleTrack*> select(const std::map<int, ScaleTrack>& tracks) const;
   // One object's measurements, fusion and course; touches only that track's state. new_fit: its divergence fit.
-  ObjectResult assess(const ScaleTrack& track, const FrameState& s, const cv::Mat& flow_q, std::map<std::string, double>& timings,
-                      std::optional<AffineFit>& new_fit);
+  // sums: this box's engine results (null on the first frame); fit_used: its moments are over last frame's fit inliers.
+  ObjectResult assess(const ScaleTrack& track, const FrameState& s, const cv::Mat& flow_q, const BoxSums* sums, bool fit_used,
+                      std::map<std::string, double>& timings, std::optional<AffineFit>& new_fit);
 
   FcwConfig cfg_;
   DetectorFn detector_;
@@ -135,6 +139,7 @@ class FcwPipeline {
   std::map<int, std::pair<AffineFit, int>> fits_;  // track -> last affine flow fit and its frame
   ClosingTracker closing_;
   std::unique_ptr<ThreadPool> pool_;
+  std::unique_ptr<MomentEngine> engine_;
   void warn(std::vector<ObjectResult>& objects, const std::map<int, ScaleTrack>& tracks, const cv::Mat& flow,
             const EgoMotion& ego, double dt);
 };

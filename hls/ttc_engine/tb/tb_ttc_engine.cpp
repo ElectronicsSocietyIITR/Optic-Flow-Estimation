@@ -17,7 +17,8 @@ static std::vector<uint8_t> readBytes(const std::string& path) {
   return std::vector<uint8_t>((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 }
 
-static int runCase(const std::string& name) {
+// via_top: drive the board's top function (frames and packed 32-bit LK flow from memory) instead of the stream core.
+static int runCase(const std::string& name, bool via_top) {
   const std::string dir = std::string(GOLDEN_DIR) + "/" + name + "/";
   int w, h, px, py, thr;
   std::ifstream(dir + "params.txt") >> w >> h >> px >> py >> thr;
@@ -37,10 +38,30 @@ static int runCase(const std::string& name) {
   std::ifstream ff(dir + "flow_boxes.txt");
   for (int x1, y1, x2, y2; ff >> x1 >> y1 >> x2 >> y2;) flow_boxes[nf++] = {x1, y1, x2, y2};
 
-  hls::stream<Pixel> in;
-  for (int i = 0; i < w * h; ++i) in.write({prev[i], curr[i], flow[2 * i], flow[2 * i + 1]});
+  FitQ fits[kMaxBoxes] = {};
+  ap_uint<kMaxBoxes> fit_valid = 0;
+  int inlier_q = 64;
+  std::ifstream qf(dir + "fits.txt");
+  qf >> inlier_q;
+  for (int b = 0; b < nf; ++b) {
+    long long valid, c[6];
+    if (!(qf >> valid >> c[0] >> c[1] >> c[2] >> c[3] >> c[4] >> c[5])) break;
+    fits[b] = {c[0], c[1], c[2], c[3], c[4], c[5]};
+    fit_valid[b] = valid != 0;
+  }
+
   static ap_int<64> sums[kMaxBoxes][kTerms];
-  ttc_engine(in, boxes, flow_boxes, n, w, h, px, py, thr, sums);
+  if (via_top) {
+    // The LK kernel's flow word: u in the upper 16 bits, v in the lower 16 (ap_fixed<16,10>, 1/64 px).
+    std::vector<ap_uint<8>> p8(prev.begin(), prev.end()), c8(curr.begin(), curr.end());
+    std::vector<ap_uint<32>> packed(w * h);
+    for (int i = 0; i < w * h; ++i) packed[i] = (ap_uint<32>(ap_uint<16>(flow[2 * i])) << 16) | ap_uint<16>(flow[2 * i + 1]);
+    ttc_engine_top(p8.data(), c8.data(), packed.data(), boxes, flow_boxes, fits, fit_valid, inlier_q, n, w, h, px, py, thr, sums);
+  } else {
+    hls::stream<Pixel> in;
+    for (int i = 0; i < w * h; ++i) in.write({prev[i], curr[i], flow[2 * i], flow[2 * i + 1]});
+    ttc_engine(in, boxes, flow_boxes, fits, fit_valid, inlier_q, n, w, h, px, py, thr, sums);
+  }
 
   std::ifstream ef(dir + "expected.txt");
   int failures = 0;
@@ -53,13 +74,14 @@ static int runCase(const std::string& name) {
         std::printf("%s box %d term %d: got %lld expected %lld\n", name.c_str(), b, k, got, expected);
     }
   }
-  std::printf("%-18s %d boxes  %s\n", name.c_str(), n, failures ? "FAIL" : "exact");
+  std::printf("%-18s %d boxes %s %s\n", name.c_str(), n, via_top ? "top   " : "stream", failures ? "FAIL" : "exact");
   return failures ? 1 : 0;
 }
 
 int main() {
   int failed = 0;
-  for (const char* c : {"random_overlap", "random_threshold", "approach", "checker", "flat"}) failed += runCase(c);
+  for (const char* c : {"random_overlap", "random_threshold", "approach", "checker", "flat", "masked", "level1"}) failed += runCase(c, false);
+  for (const char* c : {"approach", "masked"}) failed += runCase(c, true);
   std::printf(failed ? "C-SIM FAILED (%d cases)\n" : "C-SIM PASSED\n", failed);
   return failed ? 1 : 0;
 }

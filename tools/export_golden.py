@@ -505,7 +505,7 @@ def export_pipeline(out: Path) -> None:
 def export_hls(out: Path) -> None:
     """Plain files for the HLS testbench (no OpenCV in C-simulation): hls/ttc_engine/golden/<case>/."""
     from collision_avoidance.fcw import synth
-    from collision_avoidance.fcw.divergence import flow_moments_fixed, flow_rect, quantise_flow
+    from collision_avoidance.fcw.divergence import fit_to_fixed, flow_moments_fixed, flow_rect, predicted_mask_fixed, quantise_flow
     from collision_avoidance.fcw.horn import HornConfig, horn_sums, inner_box
     from collision_avoidance.fcw.pipeline import DisFlow
 
@@ -528,6 +528,19 @@ def export_hls(out: Path) -> None:
         "checker": (checker, checker, extreme_flow, [(0, 0, 512, 384)], (256, 192), HornConfig(shrink=0.0, grad_threshold_l1=0)),
         "flat": (flat, flat, np.zeros((384, 512, 2), np.int16), [(100, 100, 200, 200)], (256, 192), HornConfig()),
     }
+    # Predicted-fit inlier mask: an affine object flow with background leaking into box 0 (fit given)
+    # and box 1 (no fit: all pixels, as for a RANSAC-fallback box).
+    ys, xs = np.mgrid[0:384, 0:512]
+    fa, fb = np.array([0.8, 0.02, 0.001]), np.array([-0.3, 0.0005, 0.025])
+    affine = np.stack([fa[0] + fa[1] * (xs - 256) + fa[2] * (ys - 192), fb[0] + fb[1] * (xs - 256) + fb[2] * (ys - 192)], -1)
+    affine += rng.uniform(-0.3, 0.3, affine.shape)
+    affine[150:200, 200:260] += (5.0, -4.0)
+    cases["masked"] = (scene.frames[19], scene.frames[20], quantise_flow(affine), [(180.0, 120.0, 330.0, 260.0), (300.0, 100.0, 420.0, 220.0)],
+                       (256, 192), HornConfig())
+    fits = {"masked": [fit_to_fixed(fa, fb), None]}
+    # Horn at pyramid level 1: the engine sees the level's images, boxes and principal point.
+    lv = [cv2.pyrDown(scene.frames[19]), cv2.pyrDown(scene.frames[20])]
+    cases["level1"] = (lv[0], lv[1], np.zeros((*lv[0].shape, 2), np.int16), [tuple(np.asarray(scene.boxes[20]) / 2)], (128, 96), HornConfig())
     for name, (prev, curr, flow_q, boxes, pp, cfg) in cases.items():
         d = root / name
         d.mkdir(parents=True, exist_ok=True)
@@ -537,17 +550,26 @@ def export_hls(out: Path) -> None:
         flow_q.tofile(d / "flow.bin")           # int16 u, v interleaved, row-major
         px, py = int(round(pp[0])), int(round(pp[1]))
         (d / "params.txt").write_text(f"{w} {h} {px} {py} {cfg.grad_threshold_l1}\n")
-        rect_lines, flow_rect_lines, expected_lines = [], [], []
-        for box in boxes:
+        rect_lines, flow_rect_lines, expected_lines, fit_lines = [], [], [], []
+        for b, box in enumerate(boxes):
             rect = inner_box(box, cfg.shrink, w, h)
             sums, n = horn_sums(prev, curr, box, pp, cfg)
-            moments = flow_moments_fixed(flow_q, box, pp, cfg.shrink)
+            fit = fits.get(name, [None] * len(boxes))[b]
+            mask = None
+            if fit is not None:
+                fr = flow_rect(box, cfg.shrink, w, h)
+                mask = np.zeros((h, w), bool)
+                mask[fr[1]:fr[3], fr[0]:fr[2]] = predicted_mask_fixed(flow_q, fr, (px, py), fit, 64)
+            fit_lines.append("0 0 0 0 0 0 0" if fit is None else "1 " + " ".join(str(int(c)) for c in fit))
+            moments = flow_moments_fixed(flow_q, box, pp, cfg.shrink, mask)
             rect_lines.append(" ".join(map(str, rect)))
             flow_rect_lines.append(" ".join(map(str, flow_rect(box, cfg.shrink, w, h))))
             expected_lines.append(" ".join(str(int(v)) for v in sums) + f" {n} " + " ".join(str(int(v)) for v in moments))
         (d / "boxes.txt").write_text("\n".join(rect_lines) + "\n")
         (d / "flow_boxes.txt").write_text("\n".join(flow_rect_lines) + "\n")
         (d / "expected.txt").write_text("\n".join(expected_lines) + "\n")
+        # inlier_q, then per flow box: valid a0 a1 a2 b0 b1 b2
+        (d / "fits.txt").write_text("64\n" + "\n".join(fit_lines) + "\n")
         print("wrote", d)
 
 
