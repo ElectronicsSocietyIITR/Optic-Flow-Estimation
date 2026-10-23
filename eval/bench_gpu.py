@@ -21,44 +21,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-LEVELS, ITERS, WIN = 5, 5, 11
+from collision_avoidance.fcw.lk_flow import LkFlow  # the board's LK, exact per window (shared with the pipeline)
 
-
-def dense_lk(prev: torch.Tensor, curr: torch.Tensor) -> torch.Tensor:
-    """prev, curr: (1, 1, H, W) float on the GPU. Returns (1, 2, H, W) flow prev -> curr in px.
-
-    Exact per-window LK, like the Vitis kernel: every pixel's whole 11x11 window is warped with
-    that pixel's flow. The 121 window offsets are a batch, so each iteration is one grid_sample.
-    """
-    P, C = [prev], [curr]
-    for _ in range(LEVELS - 1):
-        P.append(F.avg_pool2d(P[-1], 2))
-        C.append(F.avg_pool2d(C[-1], 2))
-    r, n = WIN // 2, WIN * WIN
-    kx = torch.tensor([[[[-0.5, 0.0, 0.5]]]], device=prev.device)
-    offs = torch.tensor([(k % WIN - r, k // WIN - r) for k in range(n)], device=prev.device, dtype=torch.float32)
-    flow = None
-    for lvl in range(LEVELS - 1, -1, -1):
-        I, J = P[lvl], C[lvl]
-        h, w = I.shape[-2:]
-        flow = torch.zeros(1, 2, h, w, device=I.device) if flow is None else             2.0 * F.interpolate(flow, size=(h, w), mode="nearest")
-        ix = F.conv2d(F.pad(I, (1, 1, 0, 0), mode="replicate"), kx)
-        iy = F.conv2d(F.pad(I, (0, 0, 1, 1), mode="replicate"), kx.transpose(-1, -2))
-        win = lambda t: F.unfold(F.pad(t, (r, r, r, r), mode="replicate"), WIN).view(n, h, w)  # (121, h, w)
-        Iw, ixw, iyw = win(I), win(ix), win(iy)
-        gxx, gxy, gyy = (ixw * ixw).sum(0), (ixw * iyw).sum(0), (iyw * iyw).sum(0)
-        det = (gxx * gyy - gxy * gxy).clamp_min(1e-6)
-        ys, xs = torch.meshgrid(torch.arange(h, device=I.device, dtype=torch.float32),
-                                torch.arange(w, device=I.device, dtype=torch.float32), indexing="ij")
-        Jb = J.expand(n, 1, h, w)
-        for _ in range(ITERS):
-            gx = (xs[None] + offs[:, 0, None, None] + flow[0, 0][None]) / (w - 1) * 2 - 1
-            gy = (ys[None] + offs[:, 1, None, None] + flow[0, 1][None]) / (h - 1) * 2 - 1
-            Jw = F.grid_sample(Jb, torch.stack([gx, gy], -1), mode="bilinear", padding_mode="border", align_corners=True)[:, 0]
-            e = Iw - Jw
-            bx, by = (e * ixw).sum(0), (e * iyw).sum(0)
-            flow = flow + torch.stack([(gyy * bx - gxy * by) / det, (gxx * by - gxy * bx) / det])[None]
-    return flow
+_LK = LkFlow(device="cuda")
+dense_lk = _LK._flow   # (1, 1, H, W) tensors on the GPU -> (1, 2, H, W)
 
 
 def selftest() -> None:

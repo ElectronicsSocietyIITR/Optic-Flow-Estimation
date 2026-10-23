@@ -12,17 +12,17 @@ from pathlib import Path
 import cv2
 
 from collision_avoidance.fcw.metrics import warning_raises
-from collision_avoidance.fcw.pipeline import DisFlow, FcwPipeline, config_for_source
+from collision_avoidance.fcw.pipeline import FcwPipeline, config_for_source, make_flow
 from collision_avoidance.telemetry import start_run
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 
 
-def count_raises(video: Path, fx: float, detector) -> tuple[int, float]:
+def count_raises(video: Path, fx: float, detector, flow: str = "dis") -> tuple[int, float]:
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     cfg = config_for_source(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), fx)
-    pipeline, levels = FcwPipeline(cfg, detector, DisFlow()), []
+    pipeline, levels = FcwPipeline(cfg, detector, make_flow(flow)), []
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -36,6 +36,7 @@ def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--videos", type=Path, required=True)
     p.add_argument("--fx", type=float, default=500.0)
+    p.add_argument("--flow", choices=["dis", "lk", "vitis"], default="dis")
     p.add_argument("--yolo-weights", default="yolov9t.pt")
     p.add_argument("--device", default="auto")
     args = p.parse_args(argv)
@@ -47,7 +48,7 @@ def main(argv=None) -> None:
     run = start_run("fcw-eval-false-alarms", {"videos": [v.name for v in videos], "fx": args.fx}, tags=["fcw", "eval"])
     total_raises, total_s = 0, 0.0
     for video in videos:
-        raises, seconds = count_raises(video, args.fx, detector)
+        raises, seconds = count_raises(video, args.fx, detector, flow=args.flow)
         total_raises, total_s = total_raises + raises, total_s + seconds
         print(f"{video.name:40s} {seconds:7.1f} s  raises={raises}")
     rate = total_raises / (total_s / 600.0) if total_s else float("nan")

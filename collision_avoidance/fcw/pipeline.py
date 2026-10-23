@@ -108,6 +108,19 @@ class FcwFrame:
         return max((o.level for o in self.objects), default=Level.NONE)
 
 
+def make_flow(name: str) -> FlowSource:
+    """"dis": OpenCV DIS (fast PC stand-in); "lk": our dense LK (GPU); "vitis": the board's LK kernel itself (C-simulation)."""
+    if name == "dis":
+        return DisFlow()
+    if name == "lk":
+        from .lk_flow import LkFlow
+        return LkFlow()
+    if name == "vitis":
+        from .vitis_flow import VitisFlow
+        return VitisFlow()
+    raise ValueError(f"unknown flow source {name!r}")
+
+
 class DisFlow:
     """PC stand-in for the board's dense LK: OpenCV DIS optical flow."""
 

@@ -601,7 +601,26 @@ def export_yolo(out: Path) -> None:
     w.close()
 
 
-EXPORTERS = {"yolo": export_yolo, "hls": export_hls, "harness": export_harness, "tracker": export_tracker, "ego": export_ego, "scale": export_scale, "horn": export_horn,
+def export_lk(out: Path) -> None:
+    """A real dash-cam frame pair at 512x288 and Python's LK flow (GPU), for the C++ LK. Written to golden_local/."""
+    from collision_avoidance.fcw.lk_flow import LkFlow
+
+    local = out.parent / "golden_local"
+    local.mkdir(parents=True, exist_ok=True)
+    cap = cv2.VideoCapture("data/normal_driving/241220_125301_002_FH.MP4")
+    grays = []
+    for _ in range(2):
+        ok, frame = cap.read()
+        grays.append(cv2.cvtColor(cv2.resize(frame, (512, 288), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY))
+    flow = LkFlow()(grays[0], grays[1])
+    w = Writer(local, "lk")
+    w.png("prev", grays[0])
+    w.png("curr", grays[1])
+    w.mat("flow", flow.reshape(-1, 2).astype(np.float64))
+    w.close()
+
+
+EXPORTERS = {"lk": export_lk, "yolo": export_yolo, "hls": export_hls, "harness": export_harness, "tracker": export_tracker, "ego": export_ego, "scale": export_scale, "horn": export_horn,
              "divergence": export_divergence, "fusion": export_fusion, "collision": export_collision, "pipeline": export_pipeline}
 
 

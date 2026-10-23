@@ -15,14 +15,14 @@ import numpy as np
 from collision_avoidance.fcw import kitti
 from collision_avoidance.fcw.ego_rotation import EgoRotationEstimator
 from collision_avoidance.fcw.metrics import rms
-from collision_avoidance.fcw.pipeline import DisFlow
+from collision_avoidance.fcw.pipeline import make_flow
 from collision_avoidance.telemetry import start_run
 
 
-def evaluate_drive(drive_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+def evaluate_drive(drive_dir: Path, flow: str = "dis") -> tuple[np.ndarray, np.ndarray]:
     """(estimated, ground-truth) yaw rates in deg/s for every frame pair with a valid estimate."""
     images, times, K, wu = kitti.load_drive(drive_dir)
-    flow_source, estimator = DisFlow(), EgoRotationEstimator(K)
+    flow_source, estimator = make_flow(flow), EgoRotationEstimator(K)
     est, gt = [], []
     prev = cv2.imread(str(images[0]), cv2.IMREAD_GRAYSCALE)
     for i in range(1, len(images)):
@@ -39,11 +39,12 @@ def evaluate_drive(drive_dir: Path) -> tuple[np.ndarray, np.ndarray]:
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("drives", nargs="+", type=Path)
+    p.add_argument("--flow", choices=["dis", "lk", "vitis"], default="dis")
     args = p.parse_args(argv)
     run = start_run("fcw-eval-kitti-yaw", {"drives": [d.name for d in args.drives]}, tags=["fcw", "eval", "kitti"])
     all_est, all_gt = [], []
     for drive in args.drives:
-        est, gt = evaluate_drive(drive)
+        est, gt = evaluate_drive(drive, args.flow)
         all_est.append(est)
         all_gt.append(gt)
         print(f"{drive.name:40s} pairs={len(est):5d} rms={rms(est, gt):.3f} deg/s")
