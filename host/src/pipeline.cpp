@@ -52,6 +52,11 @@ FcwPipeline::FcwPipeline(FcwConfig cfg, DetectorFn detector, FlowSource flow)
       course_(cfg_.course),
       closing_(cfg_.closing) {}
 
+cv::Size processingSize(int width, int height, int target_width) {
+  const int h = static_cast<int>(std::nearbyint(static_cast<double>(target_width) * height / width / 32.0)) * 32;  // half to even, as Python
+  return {target_width, std::clamp(h, 64, 512)};
+}
+
 FcwFrame FcwPipeline::process(const cv::Mat& frame_bgr, double t) {
   const auto t0 = std::chrono::steady_clock::now();
   FcwFrame out;
@@ -156,7 +161,7 @@ ObjectResult FcwPipeline::assess(const ScaleTrack& track, const cv::Mat& gray, c
   if (auto m = looming(track)) res.measurements.push_back(*m);
   lap("looming");
   if (!prev_gray.empty() && !track.lost) {
-    const int k = chooseGap(eta_prior, dt, static_cast<int>(ring_.size()) - 1);
+    const int k = cfg_.scale_enabled ? chooseGap(eta_prior, dt, static_cast<int>(ring_.size()) - 1) : 0;
     const auto past = frameAt(index_ - k);
     const auto box_tk = track.boxAt(index_ - k);
     if (k && past && box_tk && t > past->first) {

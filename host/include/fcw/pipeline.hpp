@@ -36,6 +36,7 @@ struct FcwConfig {
   double default_fps = 30.0;
   int max_ttc_tracks = 16;
   bool heading_from_foe = true;  // course reference: smoothed FOE (follows bends); false = principal point
+  bool scale_enabled = true;     // scale-ratio search (needs up to 8 past frames)
   TrackerConfig tracker;
   EgoRotationConfig ego;
   ScaleSearchConfig scale;
@@ -77,6 +78,8 @@ struct FcwFrame {
 
 // PC stand-in for the board's dense LK: OpenCV DIS optical flow (medium preset).
 FlowSource disFlow();
+// Processing frame for a source: target_width wide, the source aspect, height a multiple of 32 in [64, 512].
+cv::Size processingSize(int width, int height, int target_width = 512);
 
 class FcwPipeline {
  public:

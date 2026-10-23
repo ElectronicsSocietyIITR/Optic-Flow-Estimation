@@ -94,6 +94,13 @@ int main(int argc, char** argv) {
 
     fcw::FcwConfig cfg;
     cfg.fx = args.fx;
+    const int src_w = static_cast<int>(cap->get(cv::CAP_PROP_FRAME_WIDTH)), src_h = static_cast<int>(cap->get(cv::CAP_PROP_FRAME_HEIGHT));
+    if (src_w > 0 && src_h > 0) {  // the source's aspect, square source pixels (see config_for_source in pipeline.py)
+      const cv::Size size = fcw::processingSize(src_w, src_h);
+      cfg.frame_width = size.width;
+      cfg.frame_height = size.height;
+      cfg.fy = args.fx * (static_cast<double>(size.height) / src_h) / (static_cast<double>(size.width) / src_w);
+    }
     std::vector<fcw::Level> levels;
     std::vector<double> totals;
     std::map<std::string, double> stage_sum;

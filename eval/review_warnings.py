@@ -15,14 +15,15 @@ import cv2
 import numpy as np
 
 from collision_avoidance.fcw.collision import Level
-from collision_avoidance.fcw.pipeline import DisFlow, FcwConfig, FcwPipeline
+from collision_avoidance.fcw.pipeline import DisFlow, FcwPipeline, config_for_source
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv"}
 
 
-def review(video: Path, cfg: FcwConfig, detector, out: Path, log) -> list[np.ndarray]:
+def review(video: Path, fx: float, detector, out: Path, log) -> list[np.ndarray]:
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    cfg = config_for_source(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), fx)
     pipeline, prev, thumbs, i = FcwPipeline(cfg, detector, DisFlow()), {}, [], 0
     while True:
         ok, frame = cap.read()
@@ -76,7 +77,7 @@ def main(argv=None) -> None:
     thumbs = []
     with open(args.out / "warnings.jsonl", "w") as log:
         for video in sorted(v for v in args.videos.iterdir() if v.suffix.lower() in VIDEO_SUFFIXES):
-            thumbs += review(video, FcwConfig(fx=args.fx), detector, args.out, log)
+            thumbs += review(video, args.fx, detector, args.out, log)
             print(f"{video.name}: {len(thumbs)} warnings so far", flush=True)
     if thumbs:
         cols = 6

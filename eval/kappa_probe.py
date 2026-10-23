@@ -14,7 +14,7 @@ import argparse
 import cv2
 import numpy as np
 
-from collision_avoidance.fcw.pipeline import DisFlow, FcwConfig, FcwPipeline
+from collision_avoidance.fcw.pipeline import DisFlow, FcwPipeline, config_for_source
 
 
 def road_ttc_frames(flow, box, foe, R, K, rows=(3, 15)):
@@ -50,7 +50,7 @@ def main(argv=None):
     det = make_detector("yolov9t.pt", 0.5, "auto")
     cap = cv2.VideoCapture(args.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    pipe = FcwPipeline(FcwConfig(fx=args.fx), det, DisFlow())
+    pipe = FcwPipeline(config_for_source(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), args.fx), det, DisFlow())
     wanted, i = set(args.frames), 0
     while i <= max(wanted):
         ok, frame = cap.read()

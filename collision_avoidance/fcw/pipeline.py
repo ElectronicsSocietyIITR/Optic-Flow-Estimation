@@ -40,6 +40,7 @@ class FcwConfig:
     default_fps: float = 30.0        # used for the first dt only
     max_ttc_tracks: int = 16         # tracks that get TTC per frame (PL engine capacity)
     heading_from_foe: bool = True    # course reference: smoothed FOE (follows bends); False = principal point
+    scale_enabled: bool = True       # scale-ratio search (needs up to 8 past frames)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     ego: EgoRotationConfig = field(default_factory=EgoRotationConfig)
     scale: ScaleSearchConfig = field(default_factory=ScaleSearchConfig)
@@ -53,6 +54,23 @@ class FcwConfig:
     @property
     def K(self) -> np.ndarray:
         return intrinsics(self.fx, self.frame_width, self.frame_height, self.fy)
+
+
+def processing_size(width: int, height: int, target_width: int = 512) -> tuple[int, int]:
+    """Processing frame for a source: target_width wide, the source aspect, height a multiple of 32 in [64, 512].
+
+    Multiples of 32 suit YOLO's strides; keeping the aspect keeps objects undistorted
+    (a 16:9 camera squeezed into 512x384 stretches everything 1.33x vertically).
+    """
+    h = int(round(target_width * height / width / 32)) * 32
+    return target_width, min(max(h, 64), 512)
+
+
+def config_for_source(width: int, height: int, fx: float, **overrides) -> "FcwConfig":
+    """FcwConfig at processing_size(width, height); fx in px of the processing frame's width, square source pixels."""
+    w, h = processing_size(width, height)
+    fy = fx * (h / height) / (w / width)   # rounding h to 32 px leaves pixels slightly non-square
+    return FcwConfig(frame_width=w, frame_height=h, fx=fx, fy=fy, **overrides)
 
 
 @dataclass
@@ -196,7 +214,7 @@ class FcwPipeline:
         eta_prior = prior.eta if prior is not None else None
         measurements = [m for m in [looming(track)] if m is not None]
         if prev_gray is not None and not track.lost:
-            k = choose_gap(eta_prior, dt, available=len(self.ring) - 1)
+            k = choose_gap(eta_prior, dt, available=len(self.ring) - 1) if cfg.scale_enabled else 0
             past, box_tk = self._frame_at(self._index - k), track.box_at(self._index - k)
             if k and past is not None and box_tk is not None and t > past[0]:
                 # The real span, not k * dt: frames can arrive irregularly.

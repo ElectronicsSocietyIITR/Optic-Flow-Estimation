@@ -4,8 +4,9 @@
     python -m collision_avoidance.fcw --source 0 --output run.mp4
     python -m collision_avoidance.fcw --source clip.mp4 --no-display --max-frames 300
 
---fx is the focal length in pixels of the 512x384 processing frame. For a
-camera with horizontal field of view F: fx = 256 / tan(F / 2).
+--fx is the focal length in pixels of the processing frame, which is 512 px
+wide with the source's aspect ratio (16:9 -> 512x288). For a camera with
+horizontal field of view F: fx = 256 / tan(F / 2).
 Keys (display mode): ESC quit, P pause.
 """
 
@@ -17,14 +18,16 @@ import numpy as np
 
 from .collision import Level
 from .metrics import warning_raises
-from .pipeline import DisFlow, FcwConfig, FcwPipeline
+from dataclasses import replace
+
+from .pipeline import DisFlow, FcwPipeline, config_for_source
 from .render import draw
 
 
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--source", required=True, help="video path or webcam index")
-    p.add_argument("--fx", type=float, default=500.0, help="focal length (px) at 512x384")
+    p.add_argument("--fx", type=float, default=500.0, help="focal length (px) at the 512 px wide processing frame")
     p.add_argument("--fy", type=float, help="vertical focal length (px) if pixels are not square")
     p.add_argument("--yolo-weights", default="yolov9t.pt")
     p.add_argument("--conf", type=float, default=0.5)
@@ -44,11 +47,13 @@ def make_detector(weights: str, conf: float, device: str):
 
 def main(argv=None) -> None:
     args = parse_args(argv)
-    cfg = FcwConfig(fx=args.fx, fy=args.fy)
     live = args.source.isdigit()
     cap = cv2.VideoCapture(int(args.source) if live else args.source)
     if not cap.isOpened():
         raise SystemExit(f"Could not open source '{args.source}'")
+    cfg = config_for_source(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), args.fx)
+    if args.fy is not None:
+        cfg = replace(cfg, fy=args.fy)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     pipeline = FcwPipeline(cfg, make_detector(args.yolo_weights, args.conf, args.device), DisFlow())
     writer, levels, totals = None, [], []

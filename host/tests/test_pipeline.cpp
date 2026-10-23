@@ -85,3 +85,9 @@ TEST(PipelineParity, TwentyTracksSelectSixteen) { replay("twenty"); }
 TEST(PipelineParity, OncomingOnTheRoadIsNotTheLead) { replay("ground_oncoming"); }
 TEST(PipelineParity, ParkedOnTheRoadStillWarns) { replay("ground_parked"); }
 TEST(PipelineParity, PedestrianCrossingIntoOurPath) { replay("ground_crossing"); }
+
+TEST(ProcessingSize, KeepsTheSourceAspect) {
+  const std::vector<std::pair<cv::Size, cv::Size>> cases{{{3840, 2160}, {512, 288}}, {{1920, 1200}, {512, 320}}, {{640, 480}, {512, 384}},
+                                                         {{1242, 375}, {512, 160}}, {{480, 640}, {512, 512}}, {{100, 10}, {512, 64}}};
+  for (const auto& [src, expected] : cases) EXPECT_EQ(fcw::processingSize(src.width, src.height), expected) << src;
+}

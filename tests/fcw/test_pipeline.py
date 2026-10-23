@@ -196,3 +196,31 @@ def test_pedestrian_who_clears_our_path_does_not_warn():
     ttc = _first_warning_ttc("person", synth.SceneConfig(**_ROAD, closing_speed_mps=10.0, z0_m=30.0, lateral_m=-3.0,
                                                          lateral_speed_mps=1.6, obj_width_m=0.5, obj_height_m=1.7, obj_y_m=0.2))
     assert ttc is None
+
+
+def test_scale_search_can_be_switched_off():
+    from dataclasses import replace
+    scene = synth.render_scene(synth.SceneConfig(n_frames=12))
+    for enabled in (True, False):
+        pipeline = FcwPipeline(replace(FcwConfig(), scale_enabled=enabled), lambda f: [Detection(scene.boxes[i], "car", 0.9)], DisFlow())
+        methods = set()
+        for i in range(len(scene.frames)):
+            r = pipeline.process(cv2.cvtColor(scene.frames[i], cv2.COLOR_GRAY2BGR), i / 30)
+            methods |= {m.method for o in r.objects for m in o.measurements}
+        assert ("scale" in methods) is enabled
+
+
+@pytest.mark.parametrize("src, expected", [((3840, 2160), (512, 288)), ((1920, 1200), (512, 320)), ((640, 480), (512, 384)),
+                                           ((1242, 375), (512, 160)), ((480, 640), (512, 512)), ((100, 10), (512, 64))])
+def test_processing_size_keeps_the_source_aspect(src, expected):
+    from collision_avoidance.fcw.pipeline import processing_size
+    assert processing_size(*src) == expected
+
+
+def test_config_for_source_keeps_pixels_square():
+    from collision_avoidance.fcw.pipeline import config_for_source
+    cfg = config_for_source(3840, 2160, fx=200.0)
+    assert (cfg.frame_width, cfg.frame_height) == (512, 288)
+    assert cfg.K[1, 1] == pytest.approx(200.0)                 # 16:9 into 16:9: square pixels
+    kitti = config_for_source(1242, 375, fx=200.0)
+    assert kitti.K[1, 1] == pytest.approx(200.0 * (160 / 375) / (512 / 1242))

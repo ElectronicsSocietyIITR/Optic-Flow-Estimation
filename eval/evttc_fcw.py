@@ -18,7 +18,7 @@ import numpy as np
 from collision_avoidance.fcw import metrics
 from collision_avoidance.fcw.collision import Level
 from collision_avoidance.fcw.measurement import METHODS
-from collision_avoidance.fcw.pipeline import DisFlow, FcwConfig, FcwPipeline
+from collision_avoidance.fcw.pipeline import DisFlow, FcwConfig, FcwPipeline, processing_size
 from collision_avoidance.telemetry import start_run
 from collision_avoidance.tracking import iou
 from ttc_esn import evttc
@@ -28,8 +28,9 @@ MIN_TARGET_IOU = 0.3
 
 
 def config_for_evttc() -> FcwConfig:
-    """EvTTC's 1920x1200 left panel resized to 512x384 makes pixels non-square."""
-    return FcwConfig(fx=evttc.LEFT_RGB_FX * 512 / PANEL_W, fy=evttc.LEFT_RGB_FX * 384 / PANEL_H)
+    """EvTTC's 1920x1200 left panel at its own aspect (512x320)."""
+    w, h = processing_size(PANEL_W, PANEL_H)
+    return FcwConfig(frame_width=w, frame_height=h, fx=evttc.LEFT_RGB_FX * w / PANEL_W, fy=evttc.LEFT_RGB_FX * h / PANEL_H)
 
 
 def target_object(result, box_512):
@@ -38,7 +39,7 @@ def target_object(result, box_512):
     return best[1] if best[0] >= MIN_TARGET_IOU else None
 
 
-def evaluate_sequence(seq_dir: Path, detector, warmup: int = 20) -> dict:
+def evaluate_sequence(seq_dir: Path, detector, warmup: int = 20, cfg: FcwConfig | None = None) -> dict:
     gt, annotations = evttc.load_gt(seq_dir), evttc.load_annotations(seq_dir)
     if not annotations:  # the target cannot be identified without at least one annotated box
         return {"name": seq_dir.name, "rows": [], "skipped": "no annotations"}
@@ -46,9 +47,10 @@ def evaluate_sequence(seq_dir: Path, detector, warmup: int = 20) -> dict:
     sync = evttc.estimate_sync_offset(annotations, gt, fps)
     first = math.ceil((gt.t.iloc[0] - sync.offset_s) * fps)
     last = math.floor((gt.t.iloc[-1] - sync.offset_s) * fps)
-    scale = np.array([512 / PANEL_W, 384 / PANEL_H] * 2)
+    cfg = cfg or config_for_evttc()
+    scale = np.array([cfg.frame_width / PANEL_W, cfg.frame_height / PANEL_H] * 2)
     anchors = np.array(sorted(annotations))
-    pipeline = FcwPipeline(config_for_evttc(), detector, DisFlow())
+    pipeline = FcwPipeline(cfg, detector, DisFlow())
 
     rows = []
     for index, panel in evttc.iter_left_frames(seq_dir / "video.mp4"):
@@ -101,14 +103,17 @@ def main(argv=None) -> None:
     p.add_argument("--data", type=Path, default=Path("data/evttc"))
     p.add_argument("--yolo-weights", default="yolov9t.pt")
     p.add_argument("--device", default="auto")
+    p.add_argument("--no-scale", action="store_true", help="disable the scale-ratio search (ablation)")
     args = p.parse_args(argv)
+    from dataclasses import replace
+    cfg = replace(config_for_evttc(), scale_enabled=not args.no_scale)
 
     from collision_avoidance.fcw.__main__ import make_detector
 
     detector = make_detector(args.yolo_weights, 0.5, args.device)
     seq_dirs = sorted(d for d in args.data.iterdir() if (d / "video.mp4").exists() and (d / "gt_ttc.csv").exists())
     run = start_run("fcw-eval-evttc", {"sequences": [d.name for d in seq_dirs]}, tags=["fcw", "eval", "evttc"])
-    results = [evaluate_sequence(d, detector) for d in seq_dirs]
+    results = [evaluate_sequence(d, detector, cfg=cfg) for d in seq_dirs]
     for res in results:
         if res["skipped"]:
             print(f"{res['name']:24s} skipped: {res['skipped']}")
