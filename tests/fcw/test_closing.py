@@ -51,3 +51,17 @@ def test_tracker_smooths_with_a_median_and_forgets_tracks():
     for c in (50.0, None, 60.0, 1000.0):
         smoothed_c = tracker.update_c(c)
     assert smoothed_c == pytest.approx(60.0)
+
+
+@pytest.mark.parametrize("closing_speed", [10.0, 25.0, 5.0])
+def test_coarse_road_grid_keeps_kappa(closing_speed):
+    # 8 x 4 px sampling (4x fewer points) reads kappa within 5 % of the dense 4 x 2 grid.
+    from collision_avoidance.fcw.closing import ClosingConfig
+    assert ClosingConfig().grid_step_px == (8, 4)
+    scene = synth.render_scene(synth.SceneConfig(n_frames=21, ground=True, ego_speed_mps=10.0,
+                                                 closing_speed_mps=closing_speed, z0_m=40.0))
+    flow = DisFlow()(scene.frames[19], scene.frames[20])
+    box = scene.boxes[20]
+    dense = road_constant(flow, PP, np.eye(3), K, [box], ClosingConfig(grid_step_px=(4, 2)))
+    coarse = road_constant(flow, PP, np.eye(3), K, [box])
+    assert coarse == pytest.approx(dense, rel=0.05)

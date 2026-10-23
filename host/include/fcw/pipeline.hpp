@@ -36,7 +36,7 @@ struct FcwConfig {
   double default_fps = 30.0;
   int max_ttc_tracks = 16;
   bool heading_from_foe = true;  // course reference: smoothed FOE (follows bends); false = principal point
-  bool scale_enabled = true;     // scale-ratio search (needs up to 8 past frames)
+  bool scale_enabled = true;     // scale-ratio search (see pipeline.py for why it stays on)
   TrackerConfig tracker;
   EgoRotationConfig ego;
   ScaleSearchConfig scale;

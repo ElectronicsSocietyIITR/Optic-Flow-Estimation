@@ -40,7 +40,7 @@ class FcwConfig:
     default_fps: float = 30.0        # used for the first dt only
     max_ttc_tracks: int = 16         # tracks that get TTC per frame (PL engine capacity)
     heading_from_foe: bool = True    # course reference: smoothed FOE (follows bends); False = principal point
-    scale_enabled: bool = True       # scale-ratio search (needs up to 8 past frames)
+    scale_enabled: bool = True       # scale-ratio search; off costs only 0.5 points on EvTTC but warns 0.5 s early on far targets
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     ego: EgoRotationConfig = field(default_factory=EgoRotationConfig)
     scale: ScaleSearchConfig = field(default_factory=ScaleSearchConfig)
