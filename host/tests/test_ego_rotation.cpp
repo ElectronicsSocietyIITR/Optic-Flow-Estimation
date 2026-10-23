@@ -14,11 +14,15 @@ double angleDeg(const cv::Matx33d& A, const cv::Matx33d& B) {
   return cv::norm(r) * 180.0 / CV_PI;
 }
 
-void replay(const std::string& name) {
+// Linear: deterministic, so tight. RANSAC: OpenCV's sampling differs from Python's, so loose.
+void replay(const std::string& name, const std::string& method = "linear") {
   golden::File g("ego");
   cv::Matx33d K;
   g.mat("K").copyTo(cv::Mat(3, 3, CV_64F, K.val));
-  fcw::EgoRotationEstimator est(K);
+  fcw::EgoRotationConfig cfg;
+  cfg.method = method;
+  fcw::EgoRotationEstimator est(K, cfg);
+  const bool tight = method == "linear";
   const int steps = static_cast<int>(g.num(name + "_steps"));
   for (int i = 0; i < steps; ++i) {
     const std::string k = name + "_s" + std::to_string(i);
@@ -26,13 +30,17 @@ void replay(const std::string& name) {
     cv::Matx33d R;
     g.mat(k + "_R").copyTo(cv::Mat(3, 3, CV_64F, R.val));
     EXPECT_LT(angleDeg(ego.R, R), 0.05) << k;
+    if (tight) {
+      const cv::Mat rv = g.mat(k + "_rvec");
+      for (int j = 0; j < 3; ++j) EXPECT_NEAR(ego.rvec[j], rv.at<double>(0, j), 1e-9) << k << " rvec " << j;
+    }
     EXPECT_EQ(ego.valid, g.num(k + "_valid") != 0) << k;
     EXPECT_EQ(ego.stationary, g.num(k + "_stationary") != 0) << k;
     ASSERT_EQ(ego.foe.has_value(), g.num(k + "_has_foe") != 0) << k;
     if (ego.foe) {
       cv::Mat foe = g.mat(k + "_foe");
-      EXPECT_NEAR(ego.foe->x, foe.at<double>(0, 0), 0.5) << k;
-      EXPECT_NEAR(ego.foe->y, foe.at<double>(0, 1), 0.5) << k;
+      EXPECT_NEAR(ego.foe->x, foe.at<double>(0, 0), tight ? 1e-6 : 0.5) << k;
+      EXPECT_NEAR(ego.foe->y, foe.at<double>(0, 1), tight ? 1e-6 : 0.5) << k;
     }
   }
 }
@@ -45,6 +53,10 @@ TEST(EgoParity, ForwardYawLeft) { replay("yawm08"); }
 TEST(EgoParity, PureRotationIsStationary) { replay("pure"); }
 TEST(EgoParity, ExcludedTruck) { replay("truck"); }
 TEST(EgoParity, NoiseHoldsLastEstimate) { replay("hold"); }
+TEST(EgoParity, LinearYawAndPitch) { replay("pitch"); }
+TEST(EgoParity, LinearHoldsWhenBackgroundHidden) { replay("hidden"); }
+TEST(EgoParity, RansacForwardYaw) { replay("ransac_yaw04", "ransac"); }
+TEST(EgoParity, RansacPureRotation) { replay("ransac_pure", "ransac"); }
 
 TEST(EgoParity, GridSamplingMatchesExactly) {
   golden::File g("ego");

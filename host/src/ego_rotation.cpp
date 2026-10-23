@@ -112,6 +112,129 @@ std::optional<EgoMotion> estimate(const cv::Mat& prev, const cv::Mat& curr, cons
   return m;
 }
 
+namespace {
+
+double cauchy(double r, double k) { return 1.0 / (1.0 + (r / k) * (r / k)); }
+
+// numpy.quantile with linear interpolation.
+double quantile(std::vector<double> v, double q) {
+  std::sort(v.begin(), v.end());
+  const double pos = q * (v.size() - 1);
+  const size_t lo = static_cast<size_t>(std::floor(pos)), hi = std::min(lo + 1, v.size() - 1);
+  return v[lo] + (pos - lo) * (v[hi] - v[lo]);
+}
+
+void rotate(const cv::Matx33d& R, double x, double y, double& xr, double& yr) {
+  const cv::Vec3d q = R * cv::Vec3d(x, y, 1.0);
+  xr = q[0] / q[2];
+  yr = q[1] / q[2];
+}
+
+cv::Matx33d expRot(const cv::Vec3d& w) {
+  cv::Matx33d R;
+  cv::Rodrigues(w, R);
+  return R;
+}
+
+}  // namespace
+
+std::optional<EgoMotion> estimateLinear(const cv::Mat& prev, const cv::Mat& curr, const cv::Matx33d& K, const EgoRotationConfig& cfg,
+                                        std::optional<cv::Point2d> foe_init) {
+  const int n = prev.rows;
+  if (n < cfg.min_points) return std::nullopt;
+  const double fx = K(0, 0), fy = K(1, 1), cx = K(0, 2), cy = K(1, 2), px = 0.5 * (fx + fy);
+  std::vector<double> x(n), y(n), xc(n), yc(n);
+  for (int i = 0; i < n; ++i) {
+    x[i] = (prev.at<double>(i, 0) - cx) / fx;
+    y[i] = (prev.at<double>(i, 1) - cy) / fy;
+    xc[i] = (curr.at<double>(i, 0) - cx) / fx;
+    yc[i] = (curr.at<double>(i, 1) - cy) / fy;
+  }
+  // d(flow)/d(omega), rows for u and for v.
+  auto ju = [&](int i) { return cv::Vec3d(-x[i] * y[i], 1 + x[i] * x[i], -y[i]); };
+  auto jv = [&](int i) { return cv::Vec3d(-(1 + y[i] * y[i]), x[i] * y[i], x[i]); };
+
+  // Rotation only (also the stationary test).
+  cv::Matx33d R = cv::Matx33d::eye();
+  for (int round = 0; round < cfg.linear_rounds; ++round) {
+    cv::Matx33d M = cv::Matx33d::eye() * 1e-12;
+    cv::Vec3d b(0, 0, 0);
+    for (int i = 0; i < n; ++i) {
+      double xr, yr;
+      rotate(R, x[i], y[i], xr, yr);
+      const double ru = xc[i] - xr, rv = yc[i] - yr, w = cauchy(std::hypot(ru, rv) * px, cfg.huber_px);
+      const cv::Vec3d a = ju(i), c = jv(i);
+      M += w * (a * a.t() + c * c.t());
+      b += w * (a * ru + c * rv);
+    }
+    cv::Vec3d d;
+    cv::solve(M, b, d, cv::DECOMP_LU);
+    R = expRot(d) * R;
+  }
+  std::vector<double> left(n);
+  for (int i = 0; i < n; ++i) {
+    double xr, yr;
+    rotate(R, x[i], y[i], xr, yr);
+    left[i] = std::hypot(xc[i] - xr, yc[i] - yr) * px;
+  }
+  if (quantile(left, cfg.stationary_quantile) < cfg.stationary_px) {
+    EgoMotion m;
+    m.R = R;
+    m.rvec = rvecOf(R);
+    m.inlier_ratio = std::count_if(left.begin(), left.end(), [&](double v) { return v < cfg.huber_px; }) / static_cast<double>(n);
+    m.stationary = true;
+    m.valid = true;
+    return m;
+  }
+
+  // Driving: rotation update and FOE together (5 unknowns).
+  R = cv::Matx33d::eye();
+  double ex = foe_init ? (foe_init->x - cx) / fx : 0.0, ey = foe_init ? (foe_init->y - cy) / fy : 0.0;
+  for (int round = 0; round < cfg.linear_rounds + cfg.refit_rounds; ++round) {
+    cv::Matx<double, 5, 5> M = cv::Matx<double, 5, 5>::eye() * 1e-12;
+    cv::Vec<double, 5> b = cv::Vec<double, 5>::all(0);
+    double wsum = 0;
+    for (int i = 0; i < n; ++i) {
+      double xr, yr;
+      rotate(R, x[i], y[i], xr, yr);
+      const double ru = xc[i] - xr, rv = yc[i] - yr, dx = xr - ex, dy = yr - ey;
+      const double dist = std::max(std::hypot(dx, dy), 0.05);
+      const double res = (ru * dy - rv * dx) / dist;  // flow across the radial line (normalised)
+      const cv::Vec3d g = (-ju(i) * dy + jv(i) * dx) * (1.0 / dist);
+      const cv::Vec<double, 5> J(g[0], g[1], g[2], rv / dist, -ru / dist);
+      const double w = round < cfg.linear_rounds ? cauchy(res * px, cfg.huber_px)
+                                                 : (std::abs(res) * px < cfg.refit_px ? 1.0 : 0.0);
+      wsum += w;
+      M += w * (J * J.t());
+      b -= w * res * J;
+    }
+    if (round >= cfg.linear_rounds && wsum < cfg.min_points) break;
+    cv::Vec<double, 5> step;
+    cv::solve(M, b, step, cv::DECOMP_LU);
+    R = expRot(cv::Vec3d(step[0], step[1], step[2])) * R;
+    ex += step[3];
+    ey += step[4];
+  }
+  int inliers = 0;
+  double outward = 0;
+  for (int i = 0; i < n; ++i) {
+    double xr, yr;
+    rotate(R, x[i], y[i], xr, yr);
+    const double ru = xc[i] - xr, rv = yc[i] - yr, dx = xr - ex, dy = yr - ey;
+    if (std::abs(ru * dy - rv * dx) / std::max(std::hypot(dx, dy), 0.05) * px < cfg.huber_px) ++inliers;
+    outward += ru * dx + rv * dy;
+  }
+  EgoMotion m;
+  m.R = R;
+  m.rvec = rvecOf(R);
+  m.inlier_ratio = inliers / static_cast<double>(n);
+  m.stationary = false;
+  m.valid = true;
+  const double max_e = std::sqrt(1.0 / (cfg.min_foe_tz * cfg.min_foe_tz) - 1.0);  // same limit as |t_z| >= min_foe_tz
+  if (outward > 0 && std::hypot(ex, ey) <= max_e) m.foe = cv::Point2d(ex * fx + cx, ey * fy + cy);
+  return m;
+}
+
 EgoMotion EgoRotationEstimator::hold() const {
   EgoMotion held = last_;
   held.inlier_ratio = 0;
@@ -120,7 +243,7 @@ EgoMotion EgoRotationEstimator::hold() const {
 }
 
 EgoMotion EgoRotationEstimator::updatePoints(const cv::Mat& prev, const cv::Mat& curr) {
-  std::optional<EgoMotion> est = estimate(prev, curr, K_, cfg_);
+  std::optional<EgoMotion> est = cfg_.method == "linear" ? estimateLinear(prev, curr, K_, cfg_, last_.foe) : estimate(prev, curr, K_, cfg_);
   if (!est || est->inlier_ratio < cfg_.min_inlier_ratio) return hold();
   if (last_.valid && std::abs(angleOf(est->R) - angleOf(last_.R)) > cfg_.max_jump_rad) return hold();
   if (est->foe && last_.foe) {

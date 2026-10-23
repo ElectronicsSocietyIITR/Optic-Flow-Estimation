@@ -5,6 +5,7 @@
 #include <opencv2/core.hpp>
 
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -13,6 +14,7 @@
 namespace fcw {
 
 struct EgoRotationConfig {
+  std::string method = "linear";  // "linear": rotation + FOE least squares; "ransac": essential matrix / homography
   int grid_step_px = 16;
   double box_margin = 0.10;
   int hood_rows = 0;
@@ -27,6 +29,12 @@ struct EgoRotationConfig {
   int max_iters = 200;    // RANSAC cap: no accuracy loss on KITTI
   int pose_points = 64;   // evenly spread inliers given to recoverPose (0 = all)
   double foe_smoothing = 0.05;  // ~0.7 s: follows bends, not per-frame jitter
+  int linear_rounds = 5;            // Gauss-Newton rounds of the linear method
+  double huber_px = 1.0;            // robust (Cauchy) weight scale and inlier threshold (px)
+  double stationary_px = 0.15;      // flow left after removing rotation below this (at the quantile): stopped
+  double stationary_quantile = 0.75;  // not the median: distant background alone can be half the points
+  double refit_px = 0.3;            // final rounds: plain least squares over points within this residual
+  int refit_rounds = 2;
 };
 
 struct EgoMotion {
@@ -43,6 +51,9 @@ struct EgoMotion {
 std::pair<cv::Mat, cv::Mat> gridSamples(const cv::Mat& flow, const std::vector<Box>& exclude, const EgoRotationConfig& cfg);
 
 std::optional<EgoMotion> estimate(const cv::Mat& prev, const cv::Mat& curr, const cv::Matx33d& K, const EgoRotationConfig& cfg);
+// Rotation and FOE by robust least squares (see ego_rotation.py, estimate_linear).
+std::optional<EgoMotion> estimateLinear(const cv::Mat& prev, const cv::Mat& curr, const cv::Matx33d& K, const EgoRotationConfig& cfg,
+                                        std::optional<cv::Point2d> foe_init = std::nullopt);
 
 class EgoRotationEstimator {
  public:

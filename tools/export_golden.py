@@ -106,6 +106,7 @@ def _ego(w, key, ego):
     w.num(f"{key}_valid", ego.valid)
     w.num(f"{key}_stationary", ego.stationary)
     w.num(f"{key}_has_foe", ego.foe is not None)
+    w.mat(f"{key}_rvec", np.asarray(ego.rvec, float).reshape(1, 3))
     if ego.foe is not None:
         w.mat(f"{key}_foe", np.asarray(ego.foe, float).reshape(1, 2))
 
@@ -140,11 +141,15 @@ def export_ego(out: Path) -> None:
         "pure": [(dense(synth.rotation_y(np.radians(0.5)), np.zeros(3), 30.0), [])],
         "truck": [(truck, [(150, 100, 350, 300)])],
         "hold": [(good, []), (noise, [])],
+        "pitch": [(dense(_cv2.Rodrigues(np.array([np.radians(0.5) / 30, np.radians(2.0) / 30, 0.0]))[0], fwd, road), [])],
+        "hidden": [(good, []), (good, [(0, 0, 500, 380)])],
+        "ransac_yaw04": [(dense(synth.rotation_y(np.radians(0.4)), fwd, road), [])],
+        "ransac_pure": [(dense(synth.rotation_y(np.radians(0.5)), np.zeros(3), 30.0), [])],
     }
     w = Writer(out, "ego")
     w.mat("K", K)
     for name, seq in cases.items():
-        est = EgoRotationEstimator(K)
+        est = EgoRotationEstimator(K, EgoRotationConfig(method="ransac" if name.startswith("ransac") else "linear"))
         w.num(f"{name}_steps", len(seq))
         for i, (flow, boxes) in enumerate(seq):
             prev, curr = grid_samples(flow, boxes, cfg)
