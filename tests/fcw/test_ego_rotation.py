@@ -71,7 +71,49 @@ def test_pose_from_an_inlier_subset_matches_the_full_set():
     from collision_avoidance.fcw.ego_rotation import EgoRotationConfig
     R, t = synth.rotation_y(np.radians(0.6)), np.array([0.0, 0.0, -0.5])
     flow = dense_flow(R, t, road_depth)
-    full = EgoRotationEstimator(K, EgoRotationConfig(pose_points=0)).update(flow, [])
-    fast = EgoRotationEstimator(K, EgoRotationConfig(pose_points=64)).update(flow, [])
+    full = EgoRotationEstimator(K, EgoRotationConfig(method="ransac", pose_points=0)).update(flow, [])
+    fast = EgoRotationEstimator(K, EgoRotationConfig(method="ransac", pose_points=64)).update(flow, [])
     assert angle_deg(full.R @ fast.R.T) < 0.01
     np.testing.assert_allclose(fast.foe, full.foe, atol=0.5)
+
+
+def _rot(rvec):
+    return cv2.Rodrigues(np.asarray(rvec, float))[0]
+
+
+def test_linear_recovers_yaw_and_pitch():
+    # 2 deg/s yaw and 0.5 deg/s pitch at 30 FPS while driving forward.
+    from collision_avoidance.fcw.ego_rotation import EgoRotationConfig, estimate_linear, grid_samples
+    rvec = np.array([np.radians(0.5) / 30, np.radians(2.0) / 30, 0.0])
+    flow = dense_flow(_rot(rvec), np.array([0.0, 0.0, -0.5]), road_depth)
+    cfg = EgoRotationConfig()
+    est = estimate_linear(*grid_samples(flow, [], cfg), K, cfg)
+    assert est is not None and not est.stationary
+    assert np.abs(est.rvec - rvec).max() < 2e-4
+
+
+def test_linear_foe_matches_translation():
+    from collision_avoidance.fcw.ego_rotation import EgoRotationConfig, estimate_linear, grid_samples
+    t = np.array([0.05, 0.02, -0.5])
+    flow = dense_flow(synth.rotation_y(np.radians(0.3)), t, road_depth)
+    cfg = EgoRotationConfig()
+    est = estimate_linear(*grid_samples(flow, [], cfg), K, cfg)
+    np.testing.assert_allclose(est.foe, (K @ t)[:2] / (K @ t)[2], atol=3.0)
+
+
+def test_linear_stationary_rotation_only():
+    from collision_avoidance.fcw.ego_rotation import EgoRotationConfig, estimate_linear, grid_samples
+    R = synth.rotation_y(np.radians(0.4))
+    cfg = EgoRotationConfig()
+    est = estimate_linear(*grid_samples(dense_flow(R, np.zeros(3), 30.0), [], cfg), K, cfg)
+    assert est.stationary and est.foe is None
+    assert angle_deg(est.R @ R.T) < 0.02
+
+
+def test_linear_holds_when_background_hidden():
+    # A truck filling the view leaves fewer static points than min_points: hold the last estimate.
+    est = EgoRotationEstimator(K)
+    good = est.update(dense_flow(synth.rotation_y(np.radians(0.3)), np.array([0, 0, -0.5]), road_depth), [])
+    held = est.update(dense_flow(synth.rotation_y(np.radians(0.3)), np.array([0, 0, -0.5]), road_depth), [(0, 0, 500, 380)])
+    assert good.valid and not held.valid
+    np.testing.assert_allclose(held.R, good.R)

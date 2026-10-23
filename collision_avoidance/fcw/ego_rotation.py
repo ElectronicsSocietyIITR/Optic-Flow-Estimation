@@ -14,6 +14,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class EgoRotationConfig:
+    method: str = "linear"            # "linear": rotation + FOE least squares; "ransac": essential matrix / homography
     grid_step_px: int = 16
     box_margin: float = 0.10          # enlarge excluded boxes by this fraction per side
     hood_rows: int = 0                # bottom image rows hidden by the car's hood
@@ -28,6 +29,12 @@ class EgoRotationConfig:
     max_iters: int = 200              # RANSAC cap: no accuracy loss on KITTI, 2.5x faster there
     pose_points: int = 64             # evenly spread inliers given to recoverPose (0 = all): it only picks 1 of 4 poses
     foe_smoothing: float = 0.05       # EMA weight of the newest FOE (~0.7 s): follows bends, not per-frame jitter
+    linear_rounds: int = 5            # Gauss-Newton rounds of the linear method
+    huber_px: float = 1.0             # robust (Cauchy) weight scale and inlier threshold (px)
+    stationary_px: float = 0.15       # flow left after removing rotation below this (at the quantile): stopped
+    stationary_quantile: float = 0.75 # not the median: distant background alone can be half the points
+    refit_px: float = 0.3             # final rounds: plain least squares over points within this residual
+    refit_rounds: int = 2
 
 
 @dataclass
@@ -113,6 +120,86 @@ def estimate(prev_pts: np.ndarray, curr_pts: np.ndarray, K: np.ndarray, cfg: Ego
     return EgoMotion(R, cv2.Rodrigues(R)[0].ravel(), foe, ratio, False, True)
 
 
+def _rotation_jacobian(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """d(flow)/d(omega) for a small rotation, normalised coordinates: (n, 3) rows for u and for v."""
+    one = np.ones_like(x)
+    return np.stack([-x * y, one + x * x, -y], 1), np.stack([-(one + y * y), x * y, x], 1)
+
+
+def _rotate(R: np.ndarray, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    q = np.stack([x, y, np.ones_like(x)], 1) @ R.T
+    return q[:, 0] / q[:, 2], q[:, 1] / q[:, 2]
+
+
+def _cauchy(r: np.ndarray, k: float) -> np.ndarray:
+    """Redescending weights: bad flow (object edges, horizon) gets almost none, unlike Huber."""
+    return 1.0 / (1.0 + (r / k) ** 2)
+
+
+def estimate_linear(prev_pts: np.ndarray, curr_pts: np.ndarray, K: np.ndarray, cfg: EgoRotationConfig,
+                    foe_init=None) -> EgoMotion | None:
+    """Rotation and FOE by robust least squares (Bruss-Horn style), no RANSAC.
+
+    Once the rotation is removed, a static point moves straight away from the FOE:
+    (flow - rotational flow) x (p - FOE) = 0. That residual is linear in a small
+    rotation update and in the FOE, so a few Gauss-Newton rounds over the grid solve
+    both (5 unknowns). If removing the rotation alone leaves almost no flow, the car
+    is stopped: no FOE. Cauchy weights keep bad flow (object edges, horizon) from pulling
+    the fit. Points are in px; the maths runs in normalised coordinates.
+    """
+    n = len(prev_pts)
+    if n < cfg.min_points:
+        return None
+    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+    x, y = (prev_pts[:, 0] - cx) / fx, (prev_pts[:, 1] - cy) / fy
+    xc, yc = (curr_pts[:, 0] - cx) / fx, (curr_pts[:, 1] - cy) / fy
+    Ju, Jv = _rotation_jacobian(x, y)
+    px = 0.5 * (fx + fy)                     # normalised -> px for thresholds
+
+    # Rotation only (also the stationary test): flow = rotational flow.
+    R = np.eye(3)
+    for _ in range(cfg.linear_rounds):
+        xr, yr = _rotate(R, x, y)
+        ru, rv = xc - xr, yc - yr
+        w = np.tile(_cauchy(np.hypot(ru, rv) * px, cfg.huber_px), 2)
+        A, b = np.vstack([Ju, Jv]), np.concatenate([ru, rv])
+        d = np.linalg.solve((A * w[:, None]).T @ A + 1e-12 * np.eye(3), (A * w[:, None]).T @ b)
+        R = cv2.Rodrigues(d)[0] @ R
+    xr, yr = _rotate(R, x, y)
+    left = np.hypot(xc - xr, yc - yr) * px
+    if np.quantile(left, cfg.stationary_quantile) < cfg.stationary_px:
+        return EgoMotion(R, cv2.Rodrigues(R)[0].ravel(), None, float((left < cfg.huber_px).mean()), True, True)
+
+    # Driving: rotation update and FOE together.
+    R = np.eye(3)
+    e = np.zeros(2) if foe_init is None else np.array([(foe_init[0] - cx) / fx, (foe_init[1] - cy) / fy])
+    for round_ in range(cfg.linear_rounds + cfg.refit_rounds):
+        xr, yr = _rotate(R, x, y)
+        ru, rv = xc - xr, yc - yr
+        dx, dy = xr - e[0], yr - e[1]
+        dist = np.maximum(np.hypot(dx, dy), 0.05)
+        res = (ru * dy - rv * dx) / dist                          # flow across the radial line (normalised)
+        J = np.column_stack([(-Ju * dy[:, None] + Jv * dx[:, None]), rv, -ru]) / dist[:, None]
+        if round_ < cfg.linear_rounds:
+            w = _cauchy(res * px, cfg.huber_px)
+        else:                                                     # RANSAC's last step: refit on clear inliers only
+            w = (np.abs(res) * px < cfg.refit_px).astype(float)
+            if w.sum() < cfg.min_points:
+                break
+        step = np.linalg.solve((J * w[:, None]).T @ J + 1e-12 * np.eye(5), -(J * w[:, None]).T @ res)
+        R = cv2.Rodrigues(step[:3])[0] @ R
+        e = e + step[3:]
+    xr, yr = _rotate(R, x, y)
+    ru, rv = xc - xr, yc - yr
+    dx, dy = xr - e[0], yr - e[1]
+    across = np.abs(ru * dy - rv * dx) / np.maximum(np.hypot(dx, dy), 0.05) * px
+    ratio = float((across < cfg.huber_px).mean())
+    forward = float(np.sum(ru * dx + rv * dy)) > 0                # expansion, not contraction
+    max_e = np.sqrt(1.0 / cfg.min_foe_tz ** 2 - 1.0)            # same heading limit as |t_z| >= min_foe_tz
+    foe = np.array([e[0] * fx + cx, e[1] * fy + cy]) if forward and np.hypot(*e) <= max_e else None
+    return EgoMotion(R, cv2.Rodrigues(R)[0].ravel(), foe, ratio, False, True)
+
+
 class EgoRotationEstimator:
     """Per-frame estimate with outlier holding and FOE smoothing."""
 
@@ -123,7 +210,10 @@ class EgoRotationEstimator:
 
     def update(self, flow: np.ndarray, exclude_boxes) -> EgoMotion:
         prev_pts, curr_pts = grid_samples(flow, exclude_boxes, self.cfg)
-        est = estimate(prev_pts, curr_pts, self.K, self.cfg)
+        if self.cfg.method == "linear":
+            est = estimate_linear(prev_pts, curr_pts, self.K, self.cfg, self.last.foe)
+        else:
+            est = estimate(prev_pts, curr_pts, self.K, self.cfg)
         if est is None or est.inlier_ratio < self.cfg.min_inlier_ratio:
             return self._hold()
         if self.last.valid and abs(_angle(est.R) - _angle(self.last.R)) > self.cfg.max_jump_rad:
