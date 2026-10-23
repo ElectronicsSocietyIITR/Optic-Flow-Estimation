@@ -46,6 +46,8 @@ class CourseChecker {
                       std::optional<double> ttc_s, double yaw_rate_rps, cv::Size image = {},
                       std::optional<cv::Matx33d> rotation_h = std::nullopt, std::optional<double> ref_x = std::nullopt);
   void retain(const std::vector<int>& track_ids);
+  // Creates these tracks' histories now, so update() from parallel workers never inserts.
+  void prepare(const std::vector<int>& track_ids);
   const CourseConfig& config() const { return cfg_; }
 
  private:

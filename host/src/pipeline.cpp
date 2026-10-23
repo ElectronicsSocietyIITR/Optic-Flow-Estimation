@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <future>
 
 namespace fcw {
 
@@ -57,20 +58,24 @@ cv::Size processingSize(int width, int height, int target_width) {
   return {target_width, std::clamp(h, 64, 512)};
 }
 
-FcwFrame FcwPipeline::process(const cv::Mat& frame_bgr, double t) {
-  const auto t0 = std::chrono::steady_clock::now();
-  FcwFrame out;
+FcwFrame FcwPipeline::process(const cv::Mat& frame_bgr, double t) { return objectStage(frameStage(frame_bgr, t)); }
+
+FrameState FcwPipeline::frameStage(const cv::Mat& frame_bgr, double t) {
+  FrameState s;
+  s.start = std::chrono::steady_clock::now();
+  FcwFrame& out = s.out;
   ++index_;
   double dt = prev_t_ ? t - *prev_t_ : 0.0;
   if (dt <= 0) dt = 1.0 / cfg_.default_fps;  // first frame, or a repeated/out-of-order timestamp
   if (!prev_t_ || t > *prev_t_) prev_t_ = t;  // never move the clock backwards
-  cv::resize(frame_bgr, out.frame, cv::Size(cfg_.frame_width, cfg_.frame_height));
-  cv::Mat gray;
-  cv::cvtColor(out.frame, gray, cv::COLOR_BGR2GRAY);
-  const cv::Mat prev_gray = ring_.empty() ? cv::Mat() : std::get<2>(ring_.back());
+  const cv::Size size(cfg_.frame_width, cfg_.frame_height);
+  if (frame_bgr.size() == size) out.frame = frame_bgr;  // already prepared (the runtime's T2 resized it)
+  else cv::resize(frame_bgr, out.frame, size);
+  cv::cvtColor(out.frame, s.gray, cv::COLOR_BGR2GRAY);
+  s.prev_gray = ring_.empty() ? cv::Mat() : std::get<2>(ring_.back());
 
   auto mark = std::chrono::steady_clock::now();
-  out.flow = prev_gray.empty() ? cv::Mat::zeros(gray.size(), CV_32FC2) : flow_(prev_gray, gray);
+  out.flow = s.prev_gray.empty() ? cv::Mat::zeros(s.gray.size(), CV_32FC2) : flow_(s.prev_gray, s.gray);
   out.timings_ms["flow"] = msSince(mark);
 
   mark = std::chrono::steady_clock::now();
@@ -79,48 +84,77 @@ FcwFrame FcwPipeline::process(const cv::Mat& frame_bgr, double t) {
     if (cfg_.course.class_width_m.count(d.cls)) detections.push_back(d);
   out.timings_ms["detection"] = msSince(mark);
 
+  // Ego-rotation needs flow N and the boxes of N-1 only, so it runs alongside the tracker update.
   mark = std::chrono::steady_clock::now();
   std::vector<Box> prev_boxes;
   for (const auto& [id, tr] : tracker_.tracks()) prev_boxes.push_back(tr.bbox());
-  const auto& tracks = tracker_.update(detections, dt, index_);
+  auto ego = std::async(std::launch::async, [&] {
+    const auto t0 = std::chrono::steady_clock::now();
+    EgoMotion e = s.prev_gray.empty() ? EgoMotion{} : ego_.update(out.flow, prev_boxes);
+    return std::make_pair(e, msSince(t0));
+  });
+  s.tracks = tracker_.update(detections, dt, index_);
   out.timings_ms["track"] = msSince(mark);
-  mark = std::chrono::steady_clock::now();
-  out.ego = prev_gray.empty() ? EgoMotion{} : ego_.update(out.flow, prev_boxes);
+  const auto [ego_result, ego_ms] = ego.get();
+  out.ego = ego_result;
+  out.timings_ms["ego"] = ego_ms;
   out.heading = cfg_.heading_from_foe && out.ego.foe ? *out.ego.foe : pp_;
-  const double yaw_rate = out.ego.rvec[1] / dt;
-  ring_.emplace_back(index_, t, gray);
+  s.yaw_rate = out.ego.rvec[1] / dt;
+  ring_.emplace_back(index_, t, s.gray);
   if (static_cast<int>(ring_.size()) > kHistory) ring_.pop_front();
-  out.timings_ms["ego"] = msSince(mark);
+  s.ring = ring_;  // cv::Mat headers only: cheap, and the next frame stage may change ring_
+  out.index = index_;
+  out.time_s = t;
+  out.dt_s = dt;
+  return s;
+}
 
+FcwFrame FcwPipeline::objectStage(FrameState s) {
+  FcwFrame& out = s.out;
+  const auto mark = std::chrono::steady_clock::now();
   for (const char* k : {"looming", "scale", "horn", "divergence", "fusion_course"}) out.timings_ms[k] = 0.0;
-  timings_ = &out.timings_ms;  // assess() adds its per-method time to these keys
-  mark = std::chrono::steady_clock::now();
-  flow_q_ = quantiseFlow(out.flow);  // divergence runs on the PL engine's flow format
-  for (const ScaleTrack* tr : select(tracks))
-    out.objects.push_back(assess(*tr, gray, prev_gray, out.flow, out.ego, out.heading, yaw_rate, t, dt));
+  const std::vector<const ScaleTrack*> selected = select(s.tracks);
+  std::vector<int> ids;
+  for (const ScaleTrack* tr : selected) ids.push_back(tr->id);
+  fusion_.prepare(ids);  // workers then only touch existing entries of their own track
+  course_.prepare(ids);
+  const cv::Mat flow_q = quantiseFlow(out.flow);  // divergence runs on the PL engine's flow format
+
+  const int n = static_cast<int>(selected.size());
+  std::vector<ObjectResult> objects(n);
+  std::vector<std::map<std::string, double>> timings(n);
+  std::vector<std::optional<AffineFit>> fits(n);
+  if (!pool_ && cfg_.object_workers > 0) pool_ = std::make_unique<ThreadPool>(cfg_.object_workers);
+  auto one = [&](int i) { objects[i] = assess(*selected[i], s, flow_q, timings[i], fits[i]); };
+  if (pool_) {
+    pool_->parallelFor(n, one);
+  } else {
+    for (int i = 0; i < n; ++i) one(i);
+  }
+  for (int i = 0; i < n; ++i) {  // merge in selection order: the result never depends on thread timing
+    for (const auto& [k, v] : timings[i]) out.timings_ms[k] += v;
+    if (fits[i]) fits_[selected[i]->id] = {*fits[i], out.index};
+  }
+  out.objects = std::move(objects);
+
   const auto warn_mark = std::chrono::steady_clock::now();
-  warn(out.objects, tracks, out.flow, out.ego, dt);
+  warn(out.objects, s.tracks, out.flow, out.ego, out.dt_s);
   out.timings_ms["warn"] = msSince(warn_mark);
-  timings_ = nullptr;
   std::vector<int> live;
-  for (const auto& [id, tr] : tracks) live.push_back(id);
+  for (const auto& [id, tr] : s.tracks) live.push_back(id);
   fusion_.retain(live);
   course_.retain(live);
   closing_.retain(live);
-  for (auto it = fsms_.begin(); it != fsms_.end();) it = tracks.count(it->first) ? std::next(it) : fsms_.erase(it);
-  for (auto it = in_path_streak_.begin(); it != in_path_streak_.end();) it = tracks.count(it->first) ? std::next(it) : in_path_streak_.erase(it);
-  for (auto it = entry_streak_.begin(); it != entry_streak_.end();) it = tracks.count(it->first) ? std::next(it) : entry_streak_.erase(it);
-  for (auto it = fits_.begin(); it != fits_.end();) it = tracks.count(it->first) ? std::next(it) : fits_.erase(it);
+  for (auto it = fsms_.begin(); it != fsms_.end();) it = s.tracks.count(it->first) ? std::next(it) : fsms_.erase(it);
+  for (auto it = in_path_streak_.begin(); it != in_path_streak_.end();) it = s.tracks.count(it->first) ? std::next(it) : in_path_streak_.erase(it);
+  for (auto it = entry_streak_.begin(); it != entry_streak_.end();) it = s.tracks.count(it->first) ? std::next(it) : entry_streak_.erase(it);
+  for (auto it = fits_.begin(); it != fits_.end();) it = s.tracks.count(it->first) ? std::next(it) : fits_.erase(it);
   on_course_.clear();
   for (const auto& o : out.objects)
     if (o.course && o.course->in_path) on_course_.insert(o.track_id);
   out.timings_ms["ttc"] = msSince(mark);
-  out.timings_ms["total"] = msSince(t0);
-
-  out.index = index_;
-  out.time_s = t;
-  out.dt_s = dt;
-  return out;
+  out.timings_ms["total"] = msSince(s.start);
+  return std::move(out);
 }
 
 std::vector<const ScaleTrack*> FcwPipeline::select(const std::map<int, ScaleTrack>& tracks) const {
@@ -137,14 +171,18 @@ std::vector<const ScaleTrack*> FcwPipeline::select(const std::map<int, ScaleTrac
   return order;
 }
 
-std::optional<std::pair<double, cv::Mat>> FcwPipeline::frameAt(int frame_index) const {
-  for (const auto& [index, time_s, gray] : ring_)
+namespace {
+std::optional<std::pair<double, cv::Mat>> frameAt(const std::deque<std::tuple<int, double, cv::Mat>>& ring, int frame_index) {
+  for (const auto& [index, time_s, gray] : ring)
     if (index == frame_index) return std::make_pair(time_s, gray);
   return std::nullopt;
 }
+}  // namespace
 
-ObjectResult FcwPipeline::assess(const ScaleTrack& track, const cv::Mat& gray, const cv::Mat& prev_gray, const cv::Mat& flow,
-                                 const EgoMotion& ego, cv::Point2d heading, double yaw_rate, double t, double dt) {
+ObjectResult FcwPipeline::assess(const ScaleTrack& track, const FrameState& s, const cv::Mat& flow_q,
+                                 std::map<std::string, double>& timings, std::optional<AffineFit>& new_fit) {
+  const FcwFrame& f = s.out;
+  const double t = f.time_s, dt = f.dt_s;
   ObjectResult res;
   res.track_id = track.id;
   res.bbox = track.bbox();
@@ -153,43 +191,43 @@ ObjectResult FcwPipeline::assess(const ScaleTrack& track, const cv::Mat& gray, c
   const EtaFilter* prior = fusion_.filter(track.id);
   const std::optional<double> eta_prior = prior ? prior->eta : std::nullopt;
   auto mark = std::chrono::steady_clock::now();
-  auto lap = [&](const char* key) {  // add the time since the last lap to timings_[key]
+  auto lap = [&](const char* key) {  // add the time since the last lap to timings[key]
     const auto now = std::chrono::steady_clock::now();
-    if (timings_) (*timings_)[key] += std::chrono::duration<double, std::milli>(now - mark).count();
+    timings[key] += std::chrono::duration<double, std::milli>(now - mark).count();
     mark = now;
   };
   if (auto m = looming(track)) res.measurements.push_back(*m);
   lap("looming");
-  if (!prev_gray.empty() && !track.lost) {
-    const int k = cfg_.scale_enabled ? chooseGap(eta_prior, dt, static_cast<int>(ring_.size()) - 1) : 0;
-    const auto past = frameAt(index_ - k);
-    const auto box_tk = track.boxAt(index_ - k);
+  if (!s.prev_gray.empty() && !track.lost) {
+    const int k = cfg_.scale_enabled ? chooseGap(eta_prior, dt, static_cast<int>(s.ring.size()) - 1) : 0;
+    const auto past = frameAt(s.ring, f.index - k);
+    const auto box_tk = track.boxAt(f.index - k);
     if (k && past && box_tk && t > past->first) {
       // The real span, not k * dt: frames can arrive irregularly.
-      if (auto m = scaleTtc(gray, past->second, box, *box_tk, k, (t - past->first) / k, cfg_.scale)) res.measurements.push_back(*m);
+      if (auto m = scaleTtc(s.gray, past->second, box, *box_tk, k, (t - past->first) / k, cfg_.scale)) res.measurements.push_back(*m);
     }
     lap("scale");
     const int level = chooseLevel(eta_prior, box, std::hypot(track.x[4], track.x[5]), dt);
-    if (auto m = hornAtLevel(prev_gray, gray, box, pp_, level, dt, cfg_.horn)) res.measurements.push_back(*m);
+    if (auto m = hornAtLevel(s.prev_gray, s.gray, box, pp_, level, dt, cfg_.horn)) res.measurements.push_back(*m);
     lap("horn");
-    const auto prev = fits_.find(track.id);
+    const auto prev = fits_.find(track.id);  // read only: fits_ is written after the parallel section
     const bool has_prev = prev != fits_.end();
-    const auto [mask, used] = divergenceMask(flow, flow_q_, box, pp_, has_prev ? std::optional<AffineFit>(prev->second.first) : std::nullopt,
-                                             has_prev ? index_ - prev->second.second : 1 << 30, cfg_.divergence);
+    const auto [mask, used] = divergenceMask(f.flow, flow_q, box, pp_, has_prev ? std::optional<AffineFit>(prev->second.first) : std::nullopt,
+                                             has_prev ? f.index - prev->second.second : 1 << 30, cfg_.divergence);
     (void)used;
-    const auto fixed = flowMomentsFixed(flow_q_, box, pp_, cfg_.divergence.shrink, mask);
+    const auto fixed = flowMomentsFixed(flow_q, box, pp_, cfg_.divergence.shrink, mask);
     const std::optional<FlowMoments> moments = fixed ? std::optional<FlowMoments>(dequantiseMoments(*fixed)) : std::nullopt;
-    const double rot = rotationDivergence(ego.R, K_, {box.cx(), box.cy()});
+    const double rot = rotationDivergence(f.ego.R, K_, {box.cx(), box.cy()});
     if (auto m = divergenceTtc(moments, box, rot, 1, dt, cfg_.divergence)) {
       res.measurements.push_back(*m);
-      if (auto fit = affineFromMoments(*moments)) fits_[track.id] = {*fit, index_};
+      if (auto fit = affineFromMoments(*moments)) new_fit = *fit;
     }
   }
   lap("divergence");
   res.estimate = fusion_.update(track.id, t, dt, res.measurements);
   const std::optional<double> ttc = res.estimate ? res.estimate->ttc_s : std::nullopt;
-  res.course = course_.update(track.id, t, box, track.cls, heading.x, heading.y, ttc, yaw_rate, gray.size(),
-                              cv::Matx33d(K_ * ego.R * K_.inv()), pp_.x);
+  res.course = course_.update(track.id, t, box, track.cls, f.heading.x, f.heading.y, ttc, s.yaw_rate, s.gray.size(),
+                              cv::Matx33d(K_ * f.ego.R * K_.inv()), pp_.x);
   lap("fusion_course");
   return res;
 }

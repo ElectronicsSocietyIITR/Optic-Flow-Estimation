@@ -9,6 +9,15 @@ namespace fcw {
 
 namespace {
 
+// find() first: parallel workers may only look up their own prepared track (std::map::find is
+// safe concurrently, operator[] is not); insert only when the track is new (serial use).
+template <class Map>
+typename Map::mapped_type& entry(Map& m, int id) {
+  auto it = m.find(id);
+  if (it == m.end()) it = m.emplace(id, typename Map::mapped_type{}).first;
+  return it->second;
+}
+
 // Least-squares d(value)/dt; none without 3 samples over a real time span (live cameras repeat timestamps).
 template <class It, class T, class V>
 std::optional<double> slope(It begin, It end, T time, V value) {
@@ -31,7 +40,7 @@ CourseResult CourseChecker::update(int track_id, double t, const Box& b, const s
                                    std::optional<cv::Matx33d> rotation_h, std::optional<double> ref_x) {
   CourseResult res;
   res.r = ((b.x1 + b.x2) / 2 - heading_x) / std::max(b.x2 - b.x1, 1.0);
-  auto& hist = history_[track_id];
+  auto& hist = entry(history_, track_id);
   hist.emplace_back(t, res.r);
   while (!hist.empty() && t - hist.front().first > cfg_.history_s) hist.pop_front();
   res.entry_speed_mps = entrySpeed(track_id, t, b, ref_x.value_or(heading_x), cls, image, rotation_h);
@@ -52,12 +61,12 @@ CourseResult CourseChecker::update(int track_id, double t, const Box& b, const s
 
 std::optional<double> CourseChecker::entrySpeed(int track_id, double t, const Box& b, double ref_x, const std::string& cls,
                                                 cv::Size image, const std::optional<cv::Matx33d>& rotation_h) {
-  auto& edges = edges_[track_id];
+  auto& edges = entry(edges_, track_id);
   const double side = (b.x1 + b.x2) / 2 >= ref_x ? 1.0 : -1.0;
   const double x_out = side > 0 ? b.x2 : b.x1;
   const bool clipped = !image.empty() && (b.x1 <= 1 || b.y1 <= 1 || b.x2 >= image.width - 1 || b.y2 >= image.height - 1);
   if (clipped || (!edges.empty() && edges.back().side != side)) edges.clear();  // no true edge; the outer edge switched
-  double& rot = rot_px_[track_id];
+  double& rot = entry(rot_px_, track_id);
   if (edges.empty()) {
     rot = 0;
   } else if (rotation_h) {
@@ -70,6 +79,14 @@ std::optional<double> CourseChecker::entrySpeed(int track_id, double t, const Bo
   const auto q_dot = slope(edges.begin(), edges.end(), [](const Edge& e) { return e.t; }, [](const Edge& e) { return e.q; });
   if (height == cfg_.class_height_m.end() || !q_dot) return std::nullopt;
   return -side * *q_dot * height->second;
+}
+
+void CourseChecker::prepare(const std::vector<int>& ids) {
+  for (int id : ids) {
+    history_[id];
+    edges_[id];
+    rot_px_[id];
+  }
 }
 
 void CourseChecker::retain(const std::vector<int>& ids) {

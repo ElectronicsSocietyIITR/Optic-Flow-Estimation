@@ -56,6 +56,8 @@ class TtcFusion {
   explicit TtcFusion(FusionConfig cfg = {}) : cfg_(std::move(cfg)) {}
   std::optional<TtcEstimate> update(int track_id, double t, double dt, const std::vector<Measurement>& ms);
   void retain(const std::vector<int>& track_ids);
+  // Creates the filters of these tracks now, so update() from parallel workers never inserts.
+  void prepare(const std::vector<int>& track_ids);
   const EtaFilter* filter(int track_id) const;
 
  private:

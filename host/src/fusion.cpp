@@ -64,7 +64,8 @@ std::set<std::string> EtaFilter::recentMethods(double t) const {
 }
 
 std::optional<TtcEstimate> TtcFusion::update(int track_id, double t, double dt, const std::vector<Measurement>& ms) {
-  auto it = filters_.try_emplace(track_id, &cfg_).first;
+  auto it = filters_.find(track_id);  // parallel workers: prepared entries are only looked up
+  if (it == filters_.end()) it = filters_.try_emplace(track_id, &cfg_).first;
   EtaFilter& f = it->second;
   f.predict(dt);
   TtcEstimate est;
@@ -85,6 +86,10 @@ std::optional<TtcEstimate> TtcFusion::update(int track_id, double t, double dt, 
 void TtcFusion::retain(const std::vector<int>& ids) {
   for (auto it = filters_.begin(); it != filters_.end();)
     it = std::find(ids.begin(), ids.end(), it->first) == ids.end() ? filters_.erase(it) : std::next(it);
+}
+
+void TtcFusion::prepare(const std::vector<int>& ids) {
+  for (int id : ids) filters_.try_emplace(id, &cfg_);
 }
 
 const EtaFilter* TtcFusion::filter(int track_id) const {

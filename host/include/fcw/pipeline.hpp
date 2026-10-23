@@ -6,9 +6,11 @@
 
 #include <opencv2/core.hpp>
 
+#include <chrono>
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <tuple>
@@ -21,6 +23,7 @@
 #include "fcw/fusion.hpp"
 #include "fcw/horn.hpp"
 #include "fcw/scale_search.hpp"
+#include "fcw/thread_pool.hpp"
 #include "fcw/tracker.hpp"
 
 namespace fcw {
@@ -36,6 +39,7 @@ struct FcwConfig {
   double default_fps = 30.0;
   int max_ttc_tracks = 16;
   bool heading_from_foe = true;  // course reference: smoothed FOE (follows bends); false = principal point
+  int object_workers = 3;       // worker threads for the per-object stage (0: the calling thread only)
   bool scale_enabled = true;     // scale-ratio search (see pipeline.py for why it stays on)
   TrackerConfig tracker;
   EgoRotationConfig ego;
@@ -76,6 +80,17 @@ struct FcwFrame {
   const ObjectResult* threat() const;  // on-course object with the smallest TTC
 };
 
+// What the frame stage hands to the object stage: the frame's results so far, plus snapshots of the
+// state the next frame stage changes (tracks, past gray frames), so the two stages can overlap.
+struct FrameState {
+  FcwFrame out;
+  cv::Mat gray, prev_gray;
+  double yaw_rate = 0;
+  std::map<int, ScaleTrack> tracks;
+  std::deque<std::tuple<int, double, cv::Mat>> ring;  // (frame index, time, gray)
+  std::chrono::steady_clock::time_point start;
+};
+
 // PC stand-in for the board's dense LK: OpenCV DIS optical flow (medium preset).
 FlowSource disFlow();
 // Processing frame for a source: target_width wide, the source aspect, height a multiple of 32 in [64, 512].
@@ -84,15 +99,22 @@ cv::Size processingSize(int width, int height, int target_width = 512);
 class FcwPipeline {
  public:
   FcwPipeline(FcwConfig cfg, DetectorFn detector, FlowSource flow);
-  FcwFrame process(const cv::Mat& frame_bgr, double t);
+  FcwFrame process(const cv::Mat& frame_bgr, double t);  // objectStage(frameStage(...))
+  // Frame stage: flow, detections, tracker in parallel with ego-rotation. A frame already at the
+  // processing size is used as is. Touches only frame-stage state, so frameStage(N+1) may run while
+  // objectStage(N) does.
+  FrameState frameStage(const cv::Mat& frame_bgr, double t);
+  // Object stage: per-object TTC on object_workers threads (results merged in selection order), then
+  // lead selection and the warning state machines. Frames must arrive in order.
+  FcwFrame objectStage(FrameState s);
   const ScaleTracker& tracker() const { return tracker_; }
   const FcwConfig& config() const { return cfg_; }
 
  private:
   std::vector<const ScaleTrack*> select(const std::map<int, ScaleTrack>& tracks) const;
-  std::optional<std::pair<double, cv::Mat>> frameAt(int frame_index) const;
-  ObjectResult assess(const ScaleTrack& track, const cv::Mat& gray, const cv::Mat& prev_gray, const cv::Mat& flow,
-                      const EgoMotion& ego, cv::Point2d heading, double yaw_rate, double t, double dt);
+  // One object's measurements, fusion and course; touches only that track's state. new_fit: its divergence fit.
+  ObjectResult assess(const ScaleTrack& track, const FrameState& s, const cv::Mat& flow_q, std::map<std::string, double>& timings,
+                      std::optional<AffineFit>& new_fit);
 
   FcwConfig cfg_;
   DetectorFn detector_;
@@ -111,9 +133,8 @@ class FcwPipeline {
   std::map<int, int> in_path_streak_;
   std::map<int, int> entry_streak_;
   std::map<int, std::pair<AffineFit, int>> fits_;  // track -> last affine flow fit and its frame
-  cv::Mat flow_q_;                                 // this frame's flow in the PL engine's format
-  std::map<std::string, double>* timings_ = nullptr;  // per-method accumulators during process()
   ClosingTracker closing_;
+  std::unique_ptr<ThreadPool> pool_;
   void warn(std::vector<ObjectResult>& objects, const std::map<int, ScaleTrack>& tracks, const cv::Mat& flow,
             const EgoMotion& ego, double dt);
 };
