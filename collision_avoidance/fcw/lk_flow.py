@@ -13,18 +13,29 @@ import numpy as np
 class LkFlow:
     """FlowSource: (prev_gray, curr_gray) uint8 -> (H, W, 2) float32 px."""
 
-    def __init__(self, levels: int = 5, iterations: int = 5, win: int = 11, device: str | None = None):
+    def __init__(self, levels: int = 5, iterations: int = 5, win: int = 11, scale: int = 1, device: str | None = None):
+        """scale 2: run on the pyramid's level 1 (cv2.pyrDown, replicated borders, as the board's preprocess kernel
+        makes it) and upsample the flow back to the input size (bilinear, values x2)."""
         import torch
 
-        self.levels, self.iterations, self.win = levels, iterations, win
+        self.levels, self.iterations, self.win, self.scale = levels, iterations, win, scale
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
 
     def __call__(self, prev: np.ndarray, curr: np.ndarray) -> np.ndarray:
+        import cv2
         import torch
+        import torch.nn.functional as F
 
+        h, w = prev.shape[:2]
+        for _ in range(self.scale.bit_length() - 1):  # scale 2 -> one pyrDown, 4 -> two
+            prev = cv2.pyrDown(prev, borderType=cv2.BORDER_REPLICATE)
+            curr = cv2.pyrDown(curr, borderType=cv2.BORDER_REPLICATE)
         t = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(self.device, torch.float32)[None, None]
         with torch.no_grad():
-            return self._flow(t(prev), t(curr))[0].permute(1, 2, 0).cpu().numpy().astype(np.float32)
+            flow = self._flow(t(prev), t(curr))
+            if self.scale > 1:
+                flow = self.scale * F.interpolate(flow, size=(h, w), mode="bilinear", align_corners=False)
+            return flow[0].permute(1, 2, 0).cpu().numpy().astype(np.float32)
 
     def _flow(self, prev, curr):
         import torch

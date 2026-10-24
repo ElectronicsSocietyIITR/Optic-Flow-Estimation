@@ -29,7 +29,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--source", required=True, help="video path or webcam index")
     p.add_argument("--fx", type=float, default=500.0, help="focal length (px) at the 512 px wide processing frame")
     p.add_argument("--fy", type=float, help="vertical focal length (px) if pixels are not square")
-    p.add_argument("--flow", choices=["dis", "lk", "vitis"], default="dis", help="dis: fast PC stand-in; lk: the board's algorithm")
+    p.add_argument("--flow", default="dis", help="dis: fast PC stand-in; lk[:levels=N,iters=N,win=N,scale=N]: the board's algorithm; vitis: its kernel")
     p.add_argument("--yolo-weights", default="yolov9t.pt")
     p.add_argument("--conf", type=float, default=0.5)
     p.add_argument("--device", default="auto")

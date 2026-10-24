@@ -121,12 +121,16 @@ def make_flow(name: str) -> FlowSource:
     """"dis": OpenCV DIS (fast PC stand-in); "lk": our dense LK (GPU); "vitis": the board's LK kernel itself (C-simulation)."""
     if name == "dis":
         return DisFlow()
-    if name == "lk":
+    if name == "lk" or name.startswith("lk:"):  # e.g. "lk:levels=4,iters=3,win=7,scale=2"
         from .lk_flow import LkFlow
-        return LkFlow()
-    if name == "vitis":
+        keys = {"levels": "levels", "iters": "iterations", "win": "win", "scale": "scale"}
+        args = dict(kv.split("=") for kv in name[3:].split(",") if kv)
+        return LkFlow(**{keys[k]: int(v) for k, v in args.items()})
+    if name == "vitis" or name.startswith("vitis:"):  # e.g. "vitis:median=0,scale=2"
         from .vitis_flow import VitisFlow
-        return VitisFlow()
+        args = dict(kv.split("=") for kv in name[6:].split(",") if kv)
+        median = {"1": 5, "5": 5, "3": 3, "0": 0}[args.get("median", "5")]
+        return VitisFlow(median=median, scale=int(args.get("scale", "1")), lines=int(args.get("lines", "50")))
     raise ValueError(f"unknown flow source {name!r}")
 
 

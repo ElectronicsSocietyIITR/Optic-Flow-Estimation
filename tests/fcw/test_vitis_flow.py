@@ -40,3 +40,22 @@ def test_prefill_runs_the_kernel_for_missing_pairs(tmp_path):
     flow = vf(prev, curr)
     err = np.hypot(flow[16:-16, 16:-16, 0] - 1.6, flow[16:-16, 16:-16, 1] + 0.7)
     assert np.median(err) < 0.1
+
+
+def test_make_flow_reads_vitis_settings():
+    from collision_avoidance.fcw.pipeline import make_flow
+
+    f = make_flow("vitis:median=0,scale=2")
+    assert (f.median, f.scale) == (False, 2)
+    assert f.kernel.name == "lk_ref_nomed" and f.cache.name == "vitis_flow_cache_nomed"
+    g = make_flow("vitis")
+    assert (g.median, g.scale, g.kernel.name, g.cache.name) == (5, 1, "lk_ref", "vitis_flow_cache")
+    h = make_flow("vitis:median=3")
+    assert (h.median, h.kernel.name, h.cache.name) == (3, "lk_ref_med3", "vitis_flow_cache_med3")
+
+
+def test_make_flow_reads_the_line_buffer_setting():
+    from collision_avoidance.fcw.pipeline import make_flow
+
+    f = make_flow("vitis:median=0,lines=26")
+    assert f.lines == 26 and f.kernel.name == "lk_ref_nomed_l26" and f.cache.name == "vitis_flow_cache_nomed_l26"

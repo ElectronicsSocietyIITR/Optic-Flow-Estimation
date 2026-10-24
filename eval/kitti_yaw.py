@@ -23,13 +23,13 @@ def evaluate_drive(drive_dir: Path, flow: str = "dis") -> tuple[np.ndarray, np.n
     """(estimated, ground-truth) yaw rates in deg/s for every frame pair with a valid estimate."""
     images, times, K, wu = kitti.load_drive(drive_dir)
     load = lambda p: cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
-    if flow == "vitis":  # the kernel takes at most 512 px width: run at the processing size, intrinsics scaled
+    if flow != "dis":  # the board's flows (vitis, lk*): at the processing size (512 wide), intrinsics scaled
         h0, w0 = load(images[0]).shape
         w, h = processing_size(w0, h0)
         K = np.diag([w / w0, h / h0, 1.0]) @ K
         load = lambda p, w=w, h=h: cv2.resize(cv2.imread(str(p), cv2.IMREAD_GRAYSCALE), (w, h), interpolation=cv2.INTER_AREA)
     flow_source, estimator = make_flow(flow), EgoRotationEstimator(K)
-    if flow == "vitis":
+    if flow.startswith("vitis"):
         grays = [load(p) for p in images]
         flow_source.prefill(list(zip(grays, grays[1:])))
     est, gt = [], []
@@ -48,7 +48,7 @@ def evaluate_drive(drive_dir: Path, flow: str = "dis") -> tuple[np.ndarray, np.n
 def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("drives", nargs="+", type=Path)
-    p.add_argument("--flow", choices=["dis", "lk", "vitis"], default="dis")
+    p.add_argument("--flow", default="dis", help="dis | vitis | lk | lk:levels=N,iters=N,win=N,scale=N")
     args = p.parse_args(argv)
     run = start_run("fcw-eval-kitti-yaw", {"drives": [d.name for d in args.drives]}, tags=["fcw", "eval", "kitti"])
     all_est, all_gt = [], []

@@ -67,7 +67,7 @@ def main(argv=None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--videos", type=Path, required=True)
     p.add_argument("--fx", type=float, default=500.0)
-    p.add_argument("--flow", choices=["dis", "lk", "vitis"], default="dis")
+    p.add_argument("--flow", default="dis", help="dis | vitis | lk | lk:levels=N,iters=N,win=N,scale=N")
     p.add_argument("--out", type=Path, default=Path("outputs/warning_review"))
     p.add_argument("--yolo-weights", default="yolov9t.pt")
     args = p.parse_args(argv)

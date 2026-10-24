@@ -52,7 +52,7 @@ def evaluate_sequence(seq_dir: Path, detector, warmup: int = 20, cfg: FcwConfig 
     scale = np.array([cfg.frame_width / PANEL_W, cfg.frame_height / PANEL_H] * 2)
     anchors = np.array(sorted(annotations))
     flow_source = make_flow(flow)
-    if flow == "vitis":  # the kernel is slow in C-simulation: compute every pair the pipeline will ask for, in parallel
+    if flow.startswith("vitis"):  # the kernel is slow in C-simulation: compute every pair the pipeline will ask for, in parallel
         grays = []
         for index, panel in evttc.iter_left_frames(seq_dir / "video.mp4"):
             if index > last:
@@ -114,7 +114,7 @@ def main(argv=None) -> None:
     p.add_argument("--yolo-weights", default="yolov9t.pt")
     p.add_argument("--device", default="auto")
     p.add_argument("--no-scale", action="store_true", help="disable the scale-ratio search (ablation)")
-    p.add_argument("--flow", choices=["dis", "lk", "vitis"], default="dis")
+    p.add_argument("--flow", default="dis", help="dis | vitis | lk | lk:levels=N,iters=N,win=N,scale=N")
     args = p.parse_args(argv)
     from dataclasses import replace
     cfg = replace(config_for_evttc(), scale_enabled=not args.no_scale)
