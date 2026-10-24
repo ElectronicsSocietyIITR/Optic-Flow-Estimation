@@ -21,12 +21,26 @@ TEST(GstCapture, ReadsAFileAsBgrxWithStreamTimestamps) {
     EXPECT_GT(f->t, last_t);
     if (i) EXPECT_NEAR(f->t - last_t, 1.0 / 30, 0.005) << i;
     last_t = f->t;
-    cv::Mat ref, bgr;
-    ASSERT_TRUE(reference.read(ref));
+    cv::Mat decoded, ref, bgr;
+    ASSERT_TRUE(reference.read(decoded));
     cv::cvtColor(f->bgr, bgr, cv::COLOR_BGRA2BGR);
-    ASSERT_EQ(bgr.size(), ref.size());
+    cv::resize(decoded, ref, bgr.size(), 0, 0, cv::INTER_AREA);  // capture scales sources above 1080p
     cv::Mat d;
     cv::absdiff(bgr, ref, d);
     EXPECT_LT(cv::mean(d)[0], 2.0) << "frame " << i << " differs from OpenCV's decode";
   }
+}
+
+// The preprocess kernel takes at most 1920x1080 (its line buffers): larger sources are scaled in
+// capture, aspect ratio kept.
+TEST(GstCapture, ScalesSourcesLargerThanTheKernelInputTo1080p) {
+  const std::string clip = std::string(FCW_DATA_DIR) + "/normal_driving/241220_125301_002_FH.MP4";
+  if (!std::filesystem::exists(clip)) GTEST_SKIP() << "dash-cam clip not present";
+  cv::VideoCapture reference(clip);
+  ASSERT_GT(reference.get(cv::CAP_PROP_FRAME_WIDTH), 1920) << "this test needs a source wider than 1920";
+  auto source = fcw::board::gstCapture(clip);
+  const auto f = source();
+  ASSERT_TRUE(f.has_value());
+  EXPECT_EQ(f->bgr.cols, 1920);
+  EXPECT_EQ(f->bgr.rows, 1080);
 }

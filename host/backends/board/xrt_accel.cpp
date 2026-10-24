@@ -53,6 +53,8 @@ struct XrtAccelerator::Impl {
 XrtAccelerator::XrtAccelerator(const std::string& xclbin, const std::string& xmodel, const FcwConfig& cfg, cv::Size source)
     : impl_(std::make_shared<Impl>()) {
   Impl& d = *impl_;
+  if (source.width > 1920 || source.height > 1080)  // the preprocess kernel's line buffers (gstCapture scales)
+    throw std::runtime_error("source larger than the preprocess kernel's 1920x1080 input");
   d.cfg = cfg;
   d.source = source;
   d.proc = {cfg.frame_width, cfg.frame_height};

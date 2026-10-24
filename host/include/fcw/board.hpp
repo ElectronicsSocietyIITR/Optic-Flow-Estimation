@@ -15,7 +15,8 @@ namespace fcw::board {
 // Frames from a file (decodebin: the K26's VCU hardware decoder when installed) or a V4L2 camera
 // ("/dev/videoN", live: the appsink drops when perception falls behind). BGRx (CV_8UC4) frames, the
 // preprocess kernel's input layout and the display's XRGB8888, so neither needs a copy-convert.
-// Timestamps: the buffer's PTS (seconds), so dt follows the camera, not this thread.
+// Timestamps: the buffer's PTS (seconds), so dt follows the camera, not this thread. Frames are at most
+// 1920x1080 (the preprocess kernel's input): larger sources are scaled down, aspect ratio kept.
 CaptureSource gstCapture(const std::string& source);
 
 // DRM/KMS display: the camera frame on the primary plane, boxes / TTC / banner on an ARGB8888 overlay

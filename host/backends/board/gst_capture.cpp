@@ -12,7 +12,11 @@ namespace fcw::board {
 namespace {
 
 std::string pipelineFor(const std::string& source) {
-  const std::string tail = " ! videoconvert ! video/x-raw,format=BGRx ! appsink name=sink max-buffers=2 sync=false";
+  // At most 1920x1080, the preprocess kernel's input: videoscale fixes a larger source to the nearest size
+  // in range with the same aspect ratio (and passes smaller ones through); a camera picks a mode in range.
+  const std::string tail =
+      " ! videoconvert ! videoscale ! video/x-raw,format=BGRx,width=[16,1920],height=[16,1080],pixel-aspect-ratio=1/1"
+      " ! appsink name=sink max-buffers=2 sync=false";
   if (source.rfind("/dev/video", 0) == 0) return "v4l2src device=" + source + tail + " drop=true";
   return "filesrc location=\"" + source + "\" ! decodebin" + tail + " drop=false";
 }
