@@ -119,6 +119,82 @@ Most of the 51 remaining warnings were oncoming cars straight ahead on narrow st
 
 Synthetic road scenes on true collision courses (object reaches our centre line at contact): a pedestrian crossing at 1.0 m/s warns at true TTC **0.80 s**, a car cutting in at 0.86 s, a cyclist at 0.37 s. Lead vehicles (parked, slower) warn at 2.17–2.60 s. The lead-vehicle rule only lets an object warn once it overlaps our width; crossing objects get there late. A pedestrian who clears our path correctly does not warn. Next: predicted path entry with a stability gate, measured against both the crossing tests and the false-alarm data.
 
+## Pipelined, parallel design (2026-10-24)
+
+Plan `docs/superpowers/plans/2026-10-23-pipelined-parallel-fcw.md` fixed the 16 issues from a low-level review of the KV260 execution flow. All numbers below are on the final code, re-run on 2026-10-24.
+
+**Ego-rotation.** Linear rotation + FOE replaced essential versus homography model selection. It is a 5-unknown Gauss–Newton with Cauchy weights, a 2-round inlier refit at 0.3 px, and a stationary test at the 75th-percentile residual < 0.15 px.
+
+| KITTI yaw RMS (805 pairs) | 0005 | 0014 | 0091 | all |
+|---|---|---|---|---|
+| essential / homography, DIS, full resolution (before) | 0.589 | 0.817 | 0.572 | 0.681 °/s |
+| linear, DIS, full resolution | 0.357 | 0.358 | 0.236 | **0.312 °/s** |
+| linear, DIS, 512×160 | 0.422 | 0.513 | 0.270 | 0.408 °/s |
+| linear, AMD's LK kernel (C-sim), 512×160 | 1.144 | 0.602 (292 pairs) | 0.370 | **0.670 °/s** |
+
+C++ ego-rotation time per frame: 8.03 → 1.16 ms when it was ported (Task 2), 6.9× against a gate of 10×, accepted for the 2.2× accuracy gain. It is 0.87 ms in the final `fcw_app` run.
+
+**Divergence.** The inlier mask is now last frame's affine fit, in fixed point: pixels within 1 px, flow in 1/64 px, fit scaled by 2^16. RANSAC is the fallback when there is no fit, the fit is more than 1 frame old, or fewer than half the pixels agree. With the mask counted inside the engine, divergence needs no per-pixel pass on the Arm cores.
+
+| EvTTC (5 approaches) | DIS flow | AMD's LK kernel (C-sim) |
+|---|---|---|
+| fused median relative error | **11.9 %** | **12.1 %** |
+| divergence alone | 9.5 % | 8.6 % |
+| warned before true TTC 2.0 s | 5 / 5 | 5 / 5 |
+| per sequence, fused (CCRs-1-high / 1-low / 1-medium / 2-high / 2-low) | 0.062 / 0.117 / 0.141 / 0.114 / 0.129 | 0.061 / 0.122 / 0.141 / 0.121 / 0.132 |
+
+The DIS figure was 11.48 % right after the divergence change (Task 3). The processing size, now 512 wide with the source's aspect (Task 7), and the integer gray formula with the replicate-border pyramid (Task 11) moved it to 11.9 %.
+
+**Scale search ablation (Task 5).** Without scale search, EvTTC is 11.97 % against 11.48 % with it, both 5/5, which met the plan's rule for disabling it. But the far head-on synthetic case then warned only at true TTC 3.2 s, against a requirement of ≤ 3.0 s. Scale search stays on.
+
+**κ grid.** The road constant is now sampled on an 8×4 px grid instead of 4×2: within 5 % on all three synthetic cases, at a quarter of the samples.
+
+**Perception cost**, `fcw_app`, 300 frames of 4K dash cam, laptop in WSL, 3 object workers:
+
+| | before | after |
+|---|---|---|
+| ego-rotation | 8.03 ms | 0.87 ms |
+| TTC methods | 2.58 ms | 0.71 ms |
+| Horn + flow sums for every box (software engine, Option A) | (in TTC methods) | 0.78 ms |
+| flow to fixed point | — | 0.26 ms (2.52 ms before vectorising) |
+| lead, κ, warnings | 0.53 ms | 0.11 ms |
+| tracking | (in 0.06 ms) | 0.34 ms |
+| a frame through perception | 11.2 ms | **4.5 ms** |
+
+End to end, the laptop runs at 20–34 FPS between runs, set by T1/T2: software 4K decode and DIS flow.
+
+`fcw_cpu_baseline` runs the same code serially on one core with plain dense LK flow, at 30 frames and 512×288:
+
+| Step | ms per frame |
+|---|---|
+| preprocess | 46.6 |
+| LK | 1,611 (1,505 with OpenCV) |
+| tracking | 0.44 |
+| ego-rotation | 1.07 |
+| engine (software) | 0.44 |
+| quantise | 0.36 |
+| **divergence** | **1.86** |
+| scale search | 0.21 |
+| warnings | 0.10 |
+| perception total | **5.4** (was 7.5) |
+
+Divergence costs 4.6× more on LK flow than on DIS flow (0.40 ms). This is not yet explained. More RANSAC fallbacks would be the first suspect; profile it on the board.
+
+On a Cortex-A53 (×15.9, PassMark) this projects to T3a ≈ 19–24 ms and T3b ≈ 22–44 ms with the PL engine. The low end of T3b is the DIS cost, the high end the LK-flow cost; Horn in software adds 7–12 ms. Each stage runs on its own core, so this is ≈ 23–30 FPS. Before, perception was one serial stage of 120–180 ms.
+
+**Correctness of the parallel runtime.** The five-stage runtime with a 3-worker object stage equals the serial pipeline frame by frame on all 11 golden scenarios. ThreadSanitizer, run with `setarch -R`, reports only races inside OpenCV's TBB workers and GDAL.
+
+**Kernels in C-simulation.**
+
+| Kernel | Result |
+|---|---|
+| Horn engine | bit-exact on 7 stream cases and 2 top-level (DDR) cases, including predicted-fit masks and level 1 |
+| LK wrapper | equals the host-driven reference: 0 of 147,456 flow words differ |
+| Preprocess | gray, INT8 tensor and pyramid exact against the software definition; Vitis bilinear resize vs `cv::resize` on the gray image of a 1080p test frame: max 2, mean 0.37 levels |
+| Software | now uses the kernel's gray formula `(4899 R + 9617 G + 1868 B + 8192) >> 14` and replicate borders in the pyramid |
+
+**Fabric.** [2026-10-fabric-budget.md](2026-10-fabric-budget.md): the design as written needs about 140k of 117k LUTs. The fallbacks, in order, are per-term accumulator widths, fewer engine lanes, B3136, and Horn on the A53. Synthesis is waiting on the device data.
+
 ## To finish this report
 
 1. Close the late-warning gap for crossing and cut-in targets without losing the false-alarm result.

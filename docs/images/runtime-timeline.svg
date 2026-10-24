@@ -1,51 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 330" width="900" height="330" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" width="900" height="400" font-family="Segoe UI, Helvetica, Arial, sans-serif">
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#4b5563"/>
     </marker>
   </defs>
-  <rect width="900" height="330" fill="#ffffff"/>
-  <text x="30" y="34" font-size="19" font-weight="700" fill="#111827">Four-thread runtime: three frames in flight</text>
-  <text x="30" y="54" font-size="12.5" fill="#4b5563">bounded queues between threads · frames are dropped only at capture (oldest first), so flow always pairs consecutive frames</text>
+  <rect width="900" height="400" fill="#ffffff"/>
+  <text x="30" y="34" font-size="19" font-weight="700" fill="#111827">Five-stage pipeline: up to four frames in flight</text>
+  <text x="30" y="54" font-size="12.5" fill="#4b5563">bounded queues (2 · 2 · 2 · 4) · frames are dropped only at capture, oldest first · T3a tracks frame N+1 while T3b assesses frame N's objects</text>
 
-  <!-- grid -->
+  <!-- grid: 4.2 px per ms, one column per 33 ms frame period -->
   <g stroke="#e5e7eb" stroke-width="1">
-    <path d="M180,70 V262"/><path d="M320,70 V262"/><path d="M460,70 V262"/><path d="M600,70 V262"/><path d="M740,70 V262"/><path d="M880,70 V262"/>
+    <path d="M180,70 V318"/><path d="M320,70 V318"/><path d="M460,70 V318"/><path d="M600,70 V318"/><path d="M740,70 V318"/><path d="M880,70 V318"/>
   </g>
   <g font-size="11" fill="#6b7280" text-anchor="middle">
     <text x="180" y="82">0</text><text x="320" y="82">33 ms</text><text x="460" y="82">67 ms</text><text x="600" y="82">100 ms</text><text x="740" y="82">133 ms</text><text x="880" y="82">167 ms</text>
   </g>
 
   <!-- row labels -->
-  <g font-size="12.5" fill="#111827">
-    <text x="30" y="113" font-weight="700">T1 capture</text>
-    <text x="30" y="157" font-weight="700">T2 DPU + LK</text>
-    <text x="30" y="201" font-weight="700">T3 perception</text>
-    <text x="30" y="245" font-weight="700">T4 render</text>
+  <g fill="#111827">
+    <text x="30" y="108" font-size="12.5" font-weight="700">T1 capture</text>
+    <text x="30" y="122" font-size="10.5" fill="#6b7280">GStreamer · VCU decode</text>
+    <text x="30" y="156" font-size="12.5" font-weight="700">T2 accelerators</text>
+    <text x="30" y="170" font-size="10.5" fill="#6b7280">preprocess → LK ∥ DPU</text>
+    <text x="30" y="204" font-size="12.5" font-weight="700">T3a frame stage</text>
+    <text x="30" y="218" font-size="10.5" fill="#6b7280">tracker · ego-rotation</text>
+    <text x="30" y="252" font-size="12.5" font-weight="700">T3b object stage</text>
+    <text x="30" y="266" font-size="10.5" fill="#6b7280">engine · 3 workers · warn</text>
+    <text x="30" y="300" font-size="12.5" font-weight="700">T4 render</text>
+    <text x="30" y="314" font-size="10.5" fill="#6b7280">DRM overlay plane</text>
   </g>
 
-  <!-- frame N (blue), N+1 (green), N+2 (amber), N+3 (purple) -->
+  <!-- frame N (blue), N+1 (green), N+2 (amber), N+3 (purple), N+4 (grey) -->
   <g font-size="11.5" font-weight="700" fill="#ffffff" text-anchor="middle">
-    <rect x="182" y="94" width="40" height="28" rx="4" fill="#2563eb"/><text x="202" y="113">N</text>
-    <rect x="322" y="94" width="40" height="28" rx="4" fill="#059669"/><text x="342" y="113">N+1</text>
-    <rect x="462" y="94" width="40" height="28" rx="4" fill="#d97706"/><text x="482" y="113">N+2</text>
-    <rect x="602" y="94" width="40" height="28" rx="4" fill="#7c3aed"/><text x="622" y="113">N+3</text>
-    <rect x="742" y="94" width="40" height="28" rx="4" fill="#6b7280"/><text x="762" y="113">N+4</text>
+    <rect x="181" y="96" width="41" height="28" rx="4" fill="#2563eb"/><text x="201" y="115">N</text>
+    <rect x="321" y="96" width="41" height="28" rx="4" fill="#059669"/><text x="341" y="115">N+1</text>
+    <rect x="461" y="96" width="41" height="28" rx="4" fill="#d97706"/><text x="481" y="115">N+2</text>
+    <rect x="601" y="96" width="41" height="28" rx="4" fill="#7c3aed"/><text x="621" y="115">N+3</text>
+    <rect x="741" y="96" width="41" height="28" rx="4" fill="#6b7280"/><text x="761" y="115">N+4</text>
 
-    <rect x="322" y="138" width="110" height="28" rx="4" fill="#2563eb"/><text x="377" y="157">N</text>
-    <rect x="462" y="138" width="110" height="28" rx="4" fill="#059669"/><text x="517" y="157">N+1</text>
-    <rect x="602" y="138" width="110" height="28" rx="4" fill="#d97706"/><text x="657" y="157">N+2</text>
-    <rect x="742" y="138" width="110" height="28" rx="4" fill="#7c3aed"/><text x="797" y="157">N+3</text>
+    <rect x="223" y="144" width="125" height="28" rx="4" fill="#2563eb"/><text x="285" y="163">N</text>
+    <rect x="363" y="144" width="124" height="28" rx="4" fill="#059669"/><text x="425" y="163">N+1</text>
+    <rect x="503" y="144" width="124" height="28" rx="4" fill="#d97706"/><text x="565" y="163">N+2</text>
+    <rect x="643" y="144" width="124" height="28" rx="4" fill="#7c3aed"/><text x="705" y="163">N+3</text>
+    <rect x="783" y="144" width="97" height="28" rx="4" fill="#6b7280"/><text x="831" y="163">N+4</text>
 
-    <rect x="462" y="182" width="128" height="28" rx="4" fill="#2563eb"/><text x="526" y="201">N</text>
-    <rect x="602" y="182" width="128" height="28" rx="4" fill="#059669"/><text x="666" y="201">N+1</text>
-    <rect x="742" y="182" width="128" height="28" rx="4" fill="#d97706"/><text x="806" y="201">N+2</text>
+    <rect x="349" y="192" width="87" height="28" rx="4" fill="#2563eb"/><text x="392" y="211">N</text>
+    <rect x="488" y="192" width="87" height="28" rx="4" fill="#059669"/><text x="531" y="211">N+1</text>
+    <rect x="628" y="192" width="87" height="28" rx="4" fill="#d97706"/><text x="671" y="211">N+2</text>
+    <rect x="768" y="192" width="87" height="28" rx="4" fill="#7c3aed"/><text x="811" y="211">N+3</text>
 
-    <rect x="602" y="226" width="40" height="28" rx="4" fill="#2563eb"/><text x="622" y="245">N</text>
-    <rect x="742" y="226" width="40" height="28" rx="4" fill="#059669"/><text x="762" y="245">N+1</text>
+    <rect x="437" y="240" width="96" height="28" rx="4" fill="#2563eb"/><text x="485" y="259">N</text>
+    <rect x="576" y="240" width="96" height="28" rx="4" fill="#059669"/><text x="624" y="259">N+1</text>
+    <rect x="716" y="240" width="96" height="28" rx="4" fill="#d97706"/><text x="764" y="259">N+2</text>
+    <rect x="856" y="240" width="24" height="28" rx="4" fill="#7c3aed"/>
+
+    <rect x="534" y="288" width="34" height="28" rx="4" fill="#2563eb"/><text x="551" y="307">N</text>
+    <rect x="673" y="288" width="34" height="28" rx="4" fill="#059669"/><text x="690" y="307">N+1</text>
+    <rect x="813" y="288" width="34" height="28" rx="4" fill="#d97706"/><text x="830" y="307">N+2</text>
   </g>
 
-  <path d="M182,284 H640" stroke="#2563eb" stroke-width="1.6" fill="none" marker-start="url(#a)" marker-end="url(#a)"/>
-  <text x="411" y="302" text-anchor="middle" font-size="12" fill="#1e40af">frame N: capture → warning on screen ≈ 3–4 frame periods (target &lt; 100 ms)</text>
-  <text x="30" y="322" font-size="11" fill="#6b7280">Schematic, drawn for 30 FPS. Laptop CPU: T3 = 7.5–11.2 ms per frame; one KV260 A53 core ≈ 120–180 ms (×15.9, PassMark), so T3 must use all 4 cores. Not yet measured.</text>
+  <path d="M182,336 H566" stroke="#2563eb" stroke-width="1.6" fill="none" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="374" y="354" text-anchor="middle" font-size="12" fill="#1e40af">frame N: capture → warning on screen ≈ 90 ms (≈ 65–105 ms; target &lt; 100 ms) · a new frame every 33–44 ms</text>
+  <text x="30" y="376" font-size="11" fill="#6b7280">Projected for the KV260, not yet measured. T2 = preprocess ≈ 7 ms (1080p) + max(LK ≈ 3.5 ms, DPU 10–30 ms). T3a ≈ 19–24 ms and T3b ≈ 22–44 ms on A53 cores</text>
+  <text x="30" y="392" font-size="11" fill="#6b7280">(laptop × 15.9, PassMark; T3b's range is DIS vs LK flow, engine in the fabric). Drawn for the fast case; the slowest stage sets the frame rate: ≈ 23–30 FPS.</text>
 </svg>

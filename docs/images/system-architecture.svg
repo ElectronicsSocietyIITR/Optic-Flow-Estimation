@@ -28,29 +28,29 @@
 
   <rect x="188" y="158" width="224" height="54" rx="7" fill="#ffffff" stroke="#2563eb"/>
   <text x="300" y="180" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">T1 · Capture</text>
-  <text x="300" y="199" text-anchor="middle" font-size="11.5" fill="#374151">decode · timestamp · drop oldest</text>
+  <text x="300" y="199" text-anchor="middle" font-size="11.5" fill="#374151">GStreamer · VCU decode · PTS · drop oldest</text>
 
   <rect x="188" y="224" width="224" height="54" rx="7" fill="#ffffff" stroke="#2563eb"/>
   <text x="300" y="246" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">T2 · Accelerator runner</text>
-  <text x="300" y="265" text-anchor="middle" font-size="11.5" fill="#374151">VART → DPU · XRT → PL kernels</text>
+  <text x="300" y="265" text-anchor="middle" font-size="11.5" fill="#374151">XRT → preprocess, LK · VART → DPU</text>
 
   <rect x="188" y="290" width="224" height="238" rx="7" fill="#ffffff" stroke="#2563eb"/>
-  <text x="300" y="312" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">T3 · Perception (per object)</text>
+  <text x="300" y="312" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">T3a frame · T3b objects</text>
   <g font-size="11.5" fill="#374151">
-    <text x="200" y="338">• Tracker: Kalman + Hungarian</text>
-    <text x="200" y="360">• Ego-rotation: E vs H, FOE</text>
-    <text x="200" y="382">• TTC: looming · scale · divergence</text>
-    <text x="200" y="404">• Horn: solve 3×3 from PL sums</text>
-    <text x="200" y="426">• Fusion: EKF on η = 1/TTC</text>
-    <text x="200" y="448">• Course check · κ oncoming test</text>
-    <text x="200" y="470">• Lead selection · warning FSM</text>
-    <text x="200" y="492">• up to 16 tracks per frame</text>
-    <text x="200" y="514" fill="#6b7280">PC: 11.2 ms/frame (measured)</text>
+    <text x="200" y="338">a · Tracker: Kalman + Hungarian</text>
+    <text x="200" y="360">a · Ego-rotation + FOE (Gauss–Newton)</text>
+    <text x="200" y="382">b · Engine call: Horn + flow sums</text>
+    <text x="200" y="404">b · 3 workers: looming · scale · div.</text>
+    <text x="200" y="426">b · Horn 3×3 solve · EKF on η</text>
+    <text x="200" y="448">b · Course check · κ oncoming test</text>
+    <text x="200" y="470">b · Lead selection · warning FSM</text>
+    <text x="200" y="492">up to 16 objects per frame</text>
+    <text x="200" y="514" fill="#6b7280">PC: 4.5 ms/frame (measured)</text>
   </g>
 
   <rect x="188" y="540" width="224" height="56" rx="7" fill="#ffffff" stroke="#2563eb"/>
   <text x="300" y="563" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">T4 · Render</text>
-  <text x="300" y="582" text-anchor="middle" font-size="11.5" fill="#374151">boxes · TTC · warning banner</text>
+  <text x="300" y="582" text-anchor="middle" font-size="11.5" fill="#374151">DRM overlay plane · banner</text>
 
   <!-- DDR -->
   <rect x="440" y="106" width="150" height="504" rx="10" fill="#f3f4f6" stroke="#6b7280" stroke-width="1.5"/>
@@ -61,22 +61,22 @@
     <text x="515" y="181" font-weight="700" fill="#111827">BGR frame</text>
     <text x="515" y="198" font-size="11" fill="#4b5563">from capture</text>
     <rect x="452" y="222" width="126" height="46" rx="6" fill="#ffffff" stroke="#9ca3af"/>
-    <text x="515" y="241" font-weight="700" fill="#111827">RGB tensor</text>
-    <text x="515" y="258" font-size="11" fill="#4b5563">512×384×3 INT8</text>
+    <text x="515" y="241" font-weight="700" fill="#111827">INT8 tensor</text>
+    <text x="515" y="258" font-size="11" fill="#4b5563">512×288×3 INT8</text>
     <rect x="452" y="282" width="126" height="46" rx="6" fill="#ffffff" stroke="#9ca3af"/>
-    <text x="515" y="301" font-weight="700" fill="#111827">Gray ring</text>
-    <text x="515" y="318" font-size="11" fill="#4b5563">9 frames + pyramid</text>
+    <text x="515" y="301" font-weight="700" fill="#111827">Pyramid ring</text>
+    <text x="515" y="318" font-size="11" fill="#4b5563">8 slots × 5 levels</text>
     <rect x="452" y="342" width="126" height="46" rx="6" fill="#ffffff" stroke="#9ca3af"/>
     <text x="515" y="361" font-weight="700" fill="#111827">Detections</text>
     <text x="515" y="378" font-size="11" fill="#4b5563">boxes · classes</text>
     <rect x="452" y="402" width="126" height="46" rx="6" fill="#ffffff" stroke="#9ca3af"/>
     <text x="515" y="421" font-weight="700" fill="#111827">Flow field</text>
-    <text x="515" y="438" font-size="11" fill="#4b5563">u, v per pixel</text>
+    <text x="515" y="438" font-size="11" fill="#4b5563">u, v in 1/64 px</text>
     <rect x="452" y="462" width="126" height="46" rx="6" fill="#ffffff" stroke="#9ca3af"/>
     <text x="515" y="481" font-weight="700" fill="#111827">Per-box sums</text>
     <text x="515" y="498" font-size="11" fill="#4b5563">16 × 23 × int64</text>
   </g>
-  <text x="515" y="545" text-anchor="middle" font-size="11" fill="#6b7280">frames N, N+1, N+2</text>
+  <text x="515" y="545" text-anchor="middle" font-size="11" fill="#6b7280">up to 4 frames</text>
   <text x="515" y="561" text-anchor="middle" font-size="11" fill="#6b7280">in flight at once</text>
 
   <!-- PL -->
@@ -86,29 +86,29 @@
 
   <rect x="662" y="160" width="198" height="70" rx="7" fill="#ffffff" stroke="#059669"/>
   <text x="761" y="182" text-anchor="middle" font-size="13" font-weight="700" fill="#065f46">Preprocess</text>
-  <text x="761" y="200" text-anchor="middle" font-size="11.5" fill="#374151">resize to 512×384</text>
-  <text x="761" y="217" text-anchor="middle" font-size="11.5" fill="#374151">RGB tensor · gray · pyramid</text>
+  <text x="761" y="200" text-anchor="middle" font-size="11.5" fill="#374151">≤1080p in → 512×288 (16:9)</text>
+  <text x="761" y="217" text-anchor="middle" font-size="11.5" fill="#374151">INT8 tensor · 5-level pyramid</text>
 
   <rect x="662" y="244" width="198" height="88" rx="7" fill="#f5f3ff" stroke="#7c3aed"/>
-  <text x="761" y="266" text-anchor="middle" font-size="13" font-weight="700" fill="#5b21b6">DPU B4096</text>
+  <text x="761" y="266" text-anchor="middle" font-size="13" font-weight="700" fill="#5b21b6">DPU B3136 / B4096</text>
   <text x="761" y="284" text-anchor="middle" font-size="11.5" fill="#374151">YOLOv9t-Hardswish, INT8</text>
   <text x="761" y="301" text-anchor="middle" font-size="11.5" fill="#374151">one subgraph · 0.317 mAP</text>
   <text x="761" y="318" text-anchor="middle" font-size="11.5" fill="#374151">decode + NMS on Arm</text>
 
   <rect x="662" y="346" width="198" height="70" rx="7" fill="#ffffff" stroke="#059669"/>
   <text x="761" y="368" text-anchor="middle" font-size="13" font-weight="700" fill="#065f46">Dense pyramidal LK</text>
-  <text x="761" y="386" text-anchor="middle" font-size="11.5" fill="#374151">Vitis Vision · 512×384</text>
-  <text x="761" y="403" text-anchor="middle" font-size="11.5" fill="#374151">gray t−1, t → u, v</text>
+  <text x="761" y="386" text-anchor="middle" font-size="11.5" fill="#374151">Vitis Vision · one start</text>
+  <text x="761" y="403" text-anchor="middle" font-size="11.5" fill="#374151">slots t−1, t → u, v</text>
 
   <rect x="662" y="430" width="198" height="108" rx="7" fill="#ffffff" stroke="#059669" stroke-width="2"/>
   <text x="761" y="452" text-anchor="middle" font-size="13" font-weight="700" fill="#065f46">Horn TTC engine</text>
-  <text x="761" y="470" text-anchor="middle" font-size="11.5" fill="#374151">custom HLS · one pass · II = 1</text>
-  <text x="761" y="487" text-anchor="middle" font-size="11.5" fill="#374151">Sobel of frame sum, G = xEx + yEy</text>
+  <text x="761" y="470" text-anchor="middle" font-size="11.5" fill="#374151">custom HLS · II = 1 · per level</text>
+  <text x="761" y="487" text-anchor="middle" font-size="11.5" fill="#374151">Horn sums · predicted-fit mask</text>
   <text x="761" y="504" text-anchor="middle" font-size="11.5" fill="#374151">23 int64 sums × 16 boxes</text>
   <text x="761" y="524" text-anchor="middle" font-size="11.5" font-weight="700" fill="#047857">bit-exact in C-sim ✓</text>
 
-  <text x="761" y="566" text-anchor="middle" font-size="11" fill="#6b7280">synthesis and board run:</text>
-  <text x="761" y="582" text-anchor="middle" font-size="11" fill="#6b7280">pending (needs device data / board)</text>
+  <text x="761" y="566" text-anchor="middle" font-size="11" fill="#6b7280">kernels checked in C-sim;</text>
+  <text x="761" y="582" text-anchor="middle" font-size="11" fill="#6b7280">synthesis + board run pending</text>
 
   <!-- arrows: IO -->
   <g stroke="#4b5563" stroke-width="1.4" fill="none" marker-end="url(#a)">

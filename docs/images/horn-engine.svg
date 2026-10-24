@@ -6,15 +6,15 @@
   </defs>
   <rect width="900" height="360" fill="#ffffff"/>
   <text x="30" y="34" font-size="19" font-weight="700" fill="#111827">Horn TTC engine (custom Vitis HLS kernel)</text>
-  <text x="30" y="54" font-size="12.5" fill="#4b5563">one streaming pass per frame pair, one pixel per clock (II = 1) · per-box sums out, small solves on the Arm cores</text>
+  <text x="30" y="54" font-size="12.5" fill="#4b5563">one pass per pyramid level in use (Option A), one pixel per clock (II = 1) · per-box sums out, small solves on the Arm cores</text>
 
   <g text-anchor="middle">
     <rect x="16" y="80" width="122" height="126" rx="8" fill="#f3f4f6" stroke="#6b7280" stroke-width="1.5"/>
-    <text x="77" y="104" font-size="13" font-weight="700" fill="#374151">AXI-Stream in</text>
+    <text x="77" y="104" font-size="13" font-weight="700" fill="#374151">m_axi in → packer</text>
     <text x="77" y="128" font-size="11.5" fill="#374151">gray t−1, t (8 b)</text>
     <text x="77" y="146" font-size="11.5" fill="#374151">flow u, v</text>
     <text x="77" y="164" font-size="11.5" fill="#374151">(16 b, 1/64 px)</text>
-    <text x="77" y="190" font-size="11" fill="#6b7280">+ 16 boxes (AXI-Lite)</text>
+    <text x="77" y="190" font-size="11" fill="#6b7280">+ box and fit tables (m_axi)</text>
 
     <rect x="156" y="80" width="140" height="126" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
     <text x="226" y="104" font-size="13" font-weight="700" fill="#065f46">Line buffers</text>
@@ -42,7 +42,7 @@
     <text x="675" y="128" font-size="11.5" fill="#374151">inside the box?</text>
     <text x="675" y="146" font-size="11.5" fill="#374151">|∇E| &gt; threshold</text>
     <text x="675" y="164" font-size="11.5" fill="#374151">(Horn terms)</text>
-    <text x="675" y="182" font-size="11.5" fill="#374151">flow box (moments)</text>
+    <text x="675" y="182" font-size="11.5" fill="#374151">flow box ∧ fit inlier (moments)</text>
 
     <rect x="754" y="80" width="130" height="126" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="2"/>
     <text x="819" y="104" font-size="13" font-weight="700" fill="#065f46">Accumulators</text>
@@ -57,14 +57,14 @@
 
     <rect x="16" y="244" width="430" height="62" rx="8" fill="#ffffff" stroke="#d1d5db"/>
     <text x="231" y="267" font-size="12" font-weight="700" fill="#111827">Exact by construction</text>
-    <text x="231" y="287" font-size="11.5" fill="#374151">largest product G² &lt; 2⁴⁰; ≤ 196,608 px per box → sums &lt; 2⁵⁸</text>
+    <text x="231" y="287" font-size="11.5" fill="#374151">largest product G² &lt; 2⁴²; ≤ 2¹⁸ px per box → sums &lt; 2⁶⁰</text>
   </g>
 
   <g stroke="#4b5563" stroke-width="1.4" fill="none" marker-end="url(#a)">
     <path d="M138,143 H154"/><path d="M296,143 H312"/><path d="M446,143 H462"/><path d="M596,143 H612"/><path d="M736,143 H752"/>
     <path d="M819,206 V242"/>
   </g>
-  <text x="812" y="230" font-size="11" fill="#4b5563" text-anchor="end">m_axi → DDR (2.9 KB per frame)</text>
-  <text x="30" y="336" font-size="11.5" fill="#047857" font-weight="700">Status: bit-exact with Python horn.py and C++ hornSums in C-simulation (5 golden cases incl. random boxes and thresholds).</text>
+  <text x="812" y="230" font-size="11" fill="#4b5563" text-anchor="end">m_axi → DDR (2.9 KB per pass)</text>
+  <text x="30" y="336" font-size="11.5" fill="#047857" font-weight="700">Status: bit-exact with Python and C++ in C-simulation (7 stream + 2 top-level cases: random boxes, thresholds, fit masks, level 1).</text>
   <text x="30" y="352" font-size="11.5" fill="#6b7280">Synthesis needs Zynq UltraScale+ device data for Vitis 2024.2; on-board integration needs the KV260.</text>
 </svg>

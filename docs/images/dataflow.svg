@@ -7,7 +7,7 @@
   <rect width="900" height="950" fill="#ffffff"/>
 
   <text x="30" y="36" font-size="19" font-weight="700" fill="#111827">Per-frame dataflow</text>
-  <text x="30" y="56" font-size="12.5" fill="#4b5563">one 512×384 frame, from pixels to a warning</text>
+  <text x="30" y="56" font-size="12.5" fill="#4b5563">one 512×288 frame (16:9 source), from pixels to a warning</text>
 
   <!-- legend -->
   <g font-size="11.5" fill="#374151">
@@ -26,7 +26,7 @@
   <!-- row 1 -->
   <rect x="320" y="160" width="260" height="66" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
   <text x="450" y="184" font-size="13.5" font-weight="700" fill="#065f46">Preprocess</text>
-  <text x="450" y="204" font-size="11.5" fill="#374151">resize 512×384 · RGB tensor · gray pyramid</text>
+  <text x="450" y="204" font-size="11.5" fill="#374151">resize to 512×288 · INT8 tensor · 5-level pyramid</text>
 
   <!-- row 2 -->
   <rect x="40" y="270" width="250" height="78" rx="8" fill="#f5f3ff" stroke="#7c3aed" stroke-width="1.5"/>
@@ -54,7 +54,7 @@
   <rect x="325" y="392" width="250" height="86" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
   <text x="450" y="415" font-size="13.5" font-weight="700" fill="#1e40af">Ego-rotation</text>
   <text x="450" y="435" font-size="11.5" fill="#374151">background flow grid →</text>
-  <text x="450" y="452" font-size="11.5" fill="#374151">essential vs homography (RANSAC)</text>
+  <text x="450" y="452" font-size="11.5" fill="#374151">rotation + FOE, Gauss–Newton (Cauchy)</text>
   <text x="450" y="469" font-size="11.5" fill="#374151">→ rotation R, heading (FOE), stopped?</text>
 
   <rect x="610" y="392" width="250" height="86" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
@@ -92,7 +92,7 @@
   <rect x="673" y="524" width="196" height="92" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
   <text x="771" y="547" font-size="13.5" font-weight="700" fill="#1e40af">LK divergence</text>
   <text x="771" y="567" font-size="11.5" fill="#374151">affine fit of the box's flow</text>
-  <text x="771" y="584" font-size="11.5" fill="#374151">RANSAC, then least squares</text>
+  <text x="771" y="584" font-size="11.5" fill="#374151">inliers of last frame’s fit (else RANSAC)</text>
   <text x="771" y="601" font-size="11.5" fill="#374151">camera rotation removed</text>
 
   <!-- row 5 -->
