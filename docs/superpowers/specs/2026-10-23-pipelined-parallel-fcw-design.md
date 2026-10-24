@@ -160,7 +160,7 @@ An LK flow source with the Vitis kernel's parameters (5 levels, 5 iterations, 11
 
 ## 11. Fabric fit (issue 16)
 
-PG338 lists B4096 at about 53k LUTs and 562 DSPs, with 257 BRAM or 68 URAM. The K26 has about 117k LUTs, 144 BRAM, 64 URAM, 1,248 DSPs (to confirm from the datasheet), so the DPU needs a mixed BRAM/URAM configuration. LK (about 31k LUTs in its 1080p configuration), the engine (about 21k), preprocessing and interconnect come on top. Synthesis decides; fallbacks in order: 8-box engine, 48-bit accumulators, B3136 DPU. Synthesis needs the Zynq UltraScale+ device data for Vitis 2024.2 (a user install).
+PG338 lists B4096 at about 53k LUTs and 562 DSPs, with 257 BRAM or 68 URAM. The K26 has about 117k LUTs, 144 BRAM, 64 URAM, 1,248 DSPs (to confirm from the datasheet), so the DPU needs a mixed BRAM/URAM configuration. LK (about 31k LUTs in its 1080p configuration), the engine (about 21k), preprocessing and interconnect come on top. Synthesis decides; fallbacks in order: 8-box engine, 48-bit accumulators, B3136 DPU. Synthesis needs the Zynq UltraScale+ device data for Vitis 2024.2 (a user install). Revised 2026-10-24 (`docs/superpowers/reports/2026-10-fabric-budget.md`): the bottom-up count puts this design at about 140k LUTs, so the fallbacks become per-term accumulator widths (bit-exact; flat 48 bits would overflow), fewer engine lanes with more passes (keeps all 16 objects), B3136, and finally the Horn engine in software on the A53.
 
 ## 12. Verification
 

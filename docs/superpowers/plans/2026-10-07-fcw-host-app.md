@@ -120,9 +120,9 @@ Each C++ module is a line-for-line port of a Python module that already passes i
 Runs only with the board. Each step lists its command and its pass condition; results go into `docs/superpowers/reports/<date>-p0-board.md`.
 
 1. **Image:** flash Kria Ubuntu 22.04 for KV260; `sudo snap install xlnx-config --classic`; confirm `xmutil platformstats` prints power rails.
-2. **Overlay:** in `platform/`, build a Vitis 2024.2 platform with DPUCZDX8G B4096 (fallback B3136) and the Vitis Vision `densePyrOpticalFlow` kernel at 512×384; package as an accel app (`xmutil loadapp fcw`). Pass: `xbutil examine` lists both CUs; utilisation report saved.
+2. **Overlay:** link `fcw.xclbin` with `hls/system/link.cfg`: DPUCZDX8G (B3136 unless synthesis shows B4096 fits, see `docs/superpowers/reports/2026-10-fabric-budget.md`), `preprocess`, `lk_wrapper` (Vitis Vision `densePyrOpticalFlow`, up to 512×512) and `ttc_engine_top`; package as an accel app (`xmutil loadapp fcw`). Pass: `xbutil examine` lists all four CUs; utilisation and timing reports saved, positive slack at 300 MHz.
 3. **DPU detector:** compile upstream's `yolov9t_kv260.xmodel` (deploy/vitis_ai) if not already; implement `backends/board/vart_yolo.cpp` (VART runner, Detect-head decode + NMS on ARM, same class filter as Python). Pass: on the demo clip, detections match the PC YOLO within IoU ≥ 0.5 for ≥ 90% of boxes; latency logged.
-4. **LK flow:** implement `backends/board/xrt_lk.cpp` (XRT buffers, zero-copy). Pass: flow on a synthetic shift pair within 0.3 px of truth; latency logged.
+4. **LK flow:** (superseded by `XrtAccelerator` in `backends/board/xrt_accel.cpp`, step 10 below) Pass: flow on a synthetic shift pair within 0.3 px of truth; latency logged.
 5. **Cross-build** `fcw_app` on the board (`cmake -DFCW_BOARD=ON`), run on the demo clip and a live USB camera. Pass: per-stage latency histograms; 30 FPS sustained or the bottleneck named; capture-to-warning latency < 100 ms.
 6. **Power:** idle vs running from `xmutil platformstats`; recorded in the report.
 
