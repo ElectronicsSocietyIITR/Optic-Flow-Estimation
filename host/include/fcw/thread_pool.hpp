@@ -1,13 +1,16 @@
 // Fixed set of worker threads for data-parallel loops (the per-object stage, spec section 5.2).
 // parallelFor(n, fn) runs fn(0..n-1) on the workers and the calling thread and returns when all
-// are done. With 0 workers everything runs on the calling thread, in order.
+// are done. With 0 workers everything runs on the calling thread, in order. If fn throws, no new
+// indices are handed out, every thread leaves fn, and the first exception is rethrown to the caller.
 #pragma once
 
 #include <atomic>
 #include <condition_variable>
+#include <exception>
 #include <functional>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace fcw {
@@ -38,6 +41,7 @@ class ThreadPool {
       fn_ = &fn;
       n_ = n;
       next_.store(0);
+      error_ = nullptr;
       busy_ = static_cast<int>(threads_.size());
       ++generation_;
     }
@@ -46,11 +50,18 @@ class ThreadPool {
     std::unique_lock<std::mutex> lock(m_);
     done_.wait(lock, [this] { return busy_ == 0; });
     fn_ = nullptr;
+    if (error_) std::rethrow_exception(std::exchange(error_, nullptr));
   }
 
  private:
   void work() {
-    for (int i = next_.fetch_add(1); i < n_; i = next_.fetch_add(1)) (*fn_)(i);
+    try {
+      for (int i = next_.fetch_add(1); i < n_; i = next_.fetch_add(1)) (*fn_)(i);
+    } catch (...) {
+      next_.store(n_);  // hand out no more indices
+      std::lock_guard<std::mutex> lock(m_);
+      if (!error_) error_ = std::current_exception();
+    }
   }
   void loop() {
     long seen = 0;
@@ -76,6 +87,7 @@ class ThreadPool {
   std::atomic<int> next_{0};
   int n_ = 0;
   int busy_ = 0;
+  std::exception_ptr error_;
   long generation_ = 0;
   bool stop_ = false;
 };
