@@ -30,7 +30,7 @@ Out run(const cv::Mat& bgr, cv::Size dst, int shift) {
     }
   std::vector<ap_int<8>> tensor(dst.area() * 3);
   std::vector<ap_uint<8>> pyr(pyrBytes(dst.height, dst.width));
-  preprocess(in.data(), tensor.data(), pyr.data(), bgr.rows, bgr.cols, dst.height, dst.width, shift);
+  preprocess(in.data(), tensor.data(), pyr.data(), pyr.data(), bgr.rows, bgr.cols, dst.height, dst.width, shift);
   Out o{cv::Mat(dst.height, dst.width, CV_8SC3), {}};
   for (int i = 0; i < dst.area() * 3; ++i) o.tensor.ptr<int8_t>()[i] = tensor[i].to_int();
   for (int l = 0; l < kPyrLevels; ++l) {

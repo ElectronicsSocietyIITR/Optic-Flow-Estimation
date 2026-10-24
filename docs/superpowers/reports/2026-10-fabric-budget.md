@@ -69,23 +69,23 @@ Costs nothing and stays bit-exact. This **replaces the flat 48-bit accumulators.
 
 Each sum is bounded by its term's worst case over the largest region (512 × 512 = 2^18 pixels) and by the declared operand ranges:
 
-- |ex|, |ey| ≤ 1020 (Sobel on 8-bit pixels);
+- |ex|, |ey| ≤ 2040 (Sobel of the frame *sum* I(t−1) + I(t), which runs 0–510; the kernel holds them in `ap_int<12>`);
 - |rx|, |ry|, |fx|, |fy| ≤ 1024 (`ap_int<11>`);
-- |g| < 2^21;
+- |g| ≤ 2^21 (`ap_int<22>`; |rx|·|ex| + |ry|·|ey| stays below that while the principal point is inside the frame);
 - |et| ≤ 255;
 - u, v are int16.
 
 | Horn term | width | Flow term | width |
 |---|---|---|---|
-| ex², ex·ey, ey² | 39 | count | 20 |
-| ex·g, ey·g | 50 | fx, fy | 29 |
-| g² | 61 | fx², fx·fy, fy² | 40 |
-| ex·et, ey·et | 37 | u, v | 34 |
+| ex², ex·ey, ey² | 41 | count | 20 |
+| ex·g, ey·g | 51 | fx, fy | 29 |
+| g² | 62 | fx², fx·fy, fy² | 40 |
+| ex·et, ey·et | 38 | u, v | 34 |
 | g·et | 48 | fx·u, fy·u, fx·v, fy·v | 45 |
 | et² | 35 | | |
 | count | 20 | | |
 
-That is 901 bits per box against 1,472 at 64 bits, 39% fewer accumulator LUTs and flip-flops.
+That is 912 bits per box against 1,472 at 64 bits, 38% fewer accumulator LUTs and flip-flops. (Corrected 2026-10-24: an earlier version of this table assumed |ex| ≤ 1020.)
 
 - **Precondition:** width and height ≤ 512, which the line buffers already require and `processingSize` guarantees.
 - **Verification:** the existing golden C-simulation cases, plus one worst-case case: a full-frame box over a 0/255 checkerboard with the principal point at the corner.
@@ -97,7 +97,7 @@ This keeps every object. It **replaces "8-box engine"**, which read literally dr
 The kernel is built with `kMaxBoxes = 4` (or 8). `XrtMomentEngine` then runs ceil(n / lanes) passes per pyramid level: every box at level 0 for its flow moments, and the Horn boxes at their own levels.
 
 - **Cost:** about 0.5 ms per extra level-0 pass at 300 MHz (512 × 288 = 147k clocks). At 4 lanes, 16 boxes add 1.5 ms.
-- **Saving:** the accumulator bank shrinks by 4×. Combined with 5.1, it drops from 23.6k to 3.6k bits.
+- **Saving:** the accumulator bank shrinks by 4×. Combined with 5.1, it drops from 23.6k to 3.6k bits (4 lanes × 912).
 
 ### 5.3 B3136 DPU
 

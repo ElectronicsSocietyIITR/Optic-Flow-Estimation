@@ -38,7 +38,7 @@ struct XrtAccelerator::Impl {
   xrt::kernel pre, lk, engine;
   xrt::bo bgr, tensor, boxes, flow_boxes, fits, sums;
   struct Slot {
-    xrt::bo pyr, flow_a, flow_b;  // the LK result lands in flow_a
+    xrt::bo pyr, flow;  // flow: 2 x rows x cols words, the LK's ping-pong halves; the result lands in the first
   };
   std::vector<Slot> slots;
   FrameRing<int> ring{1, 6};  // tags only: slot of frame i = slots[i % ring.slots()]; T2 runs up to 7 frames ahead
@@ -72,10 +72,10 @@ XrtAccelerator::XrtAccelerator(const std::string& xclbin, const std::string& xmo
   d.fits = xrt::bo(d.dev, kBoxes * 6 * 8, d.engine.group_id(5));
   d.sums = xrt::bo(d.dev, kBoxes * kTerms * 8, d.engine.group_id(14));
   const size_t pyr = static_cast<size_t>(pyrBytes(d.proc.height, d.proc.width)), flow = static_cast<size_t>(d.proc.area()) * 4;
-  const std::vector<uint8_t> zeros(flow, 0);
+  const std::vector<uint8_t> zeros(2 * flow, 0);  // both halves of a slot's flow buffer
   for (int i = 0; i < d.ring.slots(); ++i) {
-    Impl::Slot s{xrt::bo(d.dev, pyr, d.pre.group_id(2)), xrt::bo(d.dev, flow, d.lk.group_id(2)), xrt::bo(d.dev, flow, d.lk.group_id(3))};
-    for (xrt::bo* b : {&s.flow_a, &s.flow_b}) {  // the LK kernel's first pass reads them: zero once
+    Impl::Slot s{xrt::bo(d.dev, pyr, d.pre.group_id(2)), xrt::bo(d.dev, 2 * flow, d.lk.group_id(2))};
+    for (xrt::bo* b : {&s.flow}) {  // the LK kernel's first pass reads it: zero once
       b->write(zeros.data());
       b->sync(XCL_BO_SYNC_BO_TO_DEVICE);
     }
@@ -97,7 +97,7 @@ AcceleratedFrame XrtAccelerator::operator()(const CapturedFrame& f) {
   // Preprocess: BGRx frame -> INT8 tensor + pyramid slot i.
   d.bgr.write(f.bgr.ptr());
   d.bgr.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-  d.pre(d.bgr, d.tensor, s.pyr, d.source.height, d.source.width, d.proc.height, d.proc.width, d.yolo->inputShift()).wait();
+  d.pre(d.bgr, d.tensor, s.pyr, s.pyr, d.source.height, d.source.width, d.proc.height, d.proc.width, d.yolo->inputShift()).wait();
   AcceleratedFrame a;
   a.bgr = f.bgr;  // shown as is (the display draws in processing-frame coordinates, scaled)
   a.t = f.t;
@@ -108,12 +108,12 @@ AcceleratedFrame XrtAccelerator::operator()(const CapturedFrame& f) {
   d.tensor.read(d.tensor_host.data());
   // LK in the fabric || detection on the DPU.
   xrt::run lk_run;
-  if (i > 0) lk_run = d.lk(d.slot(i - 1).pyr, s.pyr, s.flow_a, s.flow_b, d.proc.height, d.proc.width);
+  if (i > 0) lk_run = d.lk(d.slot(i - 1).pyr, s.pyr, s.flow, s.flow, d.proc.height, d.proc.width);  // read and write ports, one buffer
   a.detections = (*d.yolo)(d.tensor_host.data(), d.proc);
   if (i > 0) {
     lk_run.wait();
-    s.flow_a.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-    a.flow_q = unpackFlowWords(s.flow_a.map<const uint32_t*>(), d.proc);  // the object stage uses it as is
+    s.flow.sync(XCL_BO_SYNC_BO_FROM_DEVICE, static_cast<size_t>(d.proc.area()) * 4, 0);  // the first half: the result
+    a.flow_q = unpackFlowWords(s.flow.map<const uint32_t*>(), d.proc);  // the object stage uses it as is
     a.flow_q.convertTo(a.flow, CV_32FC2, 1.0 / kFlowScale);           // px, for ego-rotation and the road
   }
   return a;
@@ -169,7 +169,7 @@ class XrtMomentEngine : public MomentEngine {
       for (xrt::bo* bo : {&d.boxes, &d.flow_boxes, &d.fits}) bo->sync(XCL_BO_SYNC_BO_TO_DEVICE);
       const size_t level_bytes = static_cast<size_t>(rows) * cols;
       xrt::bo prev_l(prev.pyr, level_bytes, off), curr_l(curr.pyr, level_bytes, off);
-      d.engine(prev_l, curr_l, curr.flow_a, d.boxes, d.flow_boxes, d.fits, fit_valid,
+      d.engine(prev_l, curr_l, curr.flow, d.boxes, d.flow_boxes, d.fits, fit_valid,
                static_cast<int>(std::nearbyint(d.cfg.divergence.inlier_px * kFlowScale)), n, cols, rows,
                static_cast<int>(std::nearbyint(pp.x * f)), static_cast<int>(std::nearbyint(pp.y * f)), d.cfg.horn.grad_threshold_l1, d.sums)
           .wait();

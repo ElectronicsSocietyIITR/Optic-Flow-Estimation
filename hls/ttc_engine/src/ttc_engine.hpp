@@ -8,7 +8,10 @@
 
 constexpr int kMaxWidth = 512;
 constexpr int kMaxHeight = 512;
-constexpr int kMaxBoxes = 16;
+#ifndef TTC_LANES
+#define TTC_LANES 16  // boxes per pass; fewer lanes = less logic, the host then runs more passes
+#endif
+constexpr int kMaxBoxes = TTC_LANES;
 // 10 Horn sums (Ex^2, ExEy, ExG, Ey^2, EyG, G^2, ExEt, EyEt, GEt, Et^2) + Horn pixel count,
 // then 12 flow moments (n, x, y, xx, xy, yy, u, v, xu, yu, xv, yv; u, v in 1/64 px).
 constexpr int kHornTerms = 11;

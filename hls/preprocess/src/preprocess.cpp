@@ -21,7 +21,7 @@ read:
 
 // One pass over the resized frame: the DPU tensor, gray level 0 to memory, and level 0 again as a
 // stream for the pyramid.
-void tensorAndGray(BgrSmall& small, ap_int<8>* tensor, ap_uint<8>* level0, Gray<1>& g0, int n, int input_shift) {
+void tensorAndGray(BgrSmall& small, ap_int<8>* tensor, ap_uint<8>* level0, int n, int input_shift) {
 split:
   for (int i = 0; i < n; ++i) {
 #pragma HLS PIPELINE II = 1
@@ -32,20 +32,15 @@ split:
       const ap_uint<16> q = (ap_uint<16>(rgb[c]) * (ap_uint<16>(1) << input_shift) * 2 + 255) / 510;
       tensor[3 * i + c] = q > 127 ? ap_int<8>(127) : ap_int<8>(q);
     }
-    const ap_uint<8> y = (ap_uint<24>(4899) * r + ap_uint<24>(9617) * g + ap_uint<24>(1868) * b + 8192) >> 14;
-    level0[i] = y;
-    g0.write(i, y);
+    level0[i] = (ap_uint<24>(4899) * r + ap_uint<24>(9617) * g + ap_uint<24>(1868) * b + 8192) >> 14;
   }
 }
 
-template <class M>
-void writeAndPass(M& in, ap_uint<8>* out, M& again, int n) {
-copy:
+void readLevel(const ap_uint<8>* in, Gray<1>& m, int n) {
+read:
   for (int i = 0; i < n; ++i) {
 #pragma HLS PIPELINE II = 1
-    const ap_uint<8> v = in.read(i);
-    out[i] = v;
-    again.write(i, v);
+    m.write(i, in[i]);
   }
 }
 
@@ -58,13 +53,40 @@ copy:
   }
 }
 
+// The camera frame -> resize -> DPU tensor + pyramid level 0, one streaming pass.
+void frameToLevel0(const ap_uint<32>* bgr, ap_int<8>* tensor, ap_uint<8>* level0, int src_rows, int src_cols, int rows, int cols,
+                   int input_shift) {
+  static Bgr src;
+  static BgrSmall small;
+  src.rows = src_rows; src.cols = src_cols; src.size = src_rows * src_cols;
+  small.rows = rows; small.cols = cols; small.size = rows * cols;
+#pragma HLS DATAFLOW
+  readFrame(bgr, src, src_rows * src_cols);
+  xf::cv::resize<XF_INTERPOLATION_BILINEAR, XF_8UC3, kSrcMaxRows, kSrcMaxCols, kDstMaxRows, kDstMaxCols, XF_NPPC1, false, 4>(src, small);
+  tensorAndGray(small, tensor, level0, rows * cols, input_shift);
+}
+
+// One pyramid level from the one above it, through DDR. One pyrDown instance serves all four levels (they
+// add only ~1/3 of level 0's pixels, ~0.2 ms in all): four instances cost ~13k LUTs in synthesis.
+void pyramidLevel(const ap_uint<8>* in, ap_uint<8>* out, int rows, int cols, int rows2, int cols2) {
+  static Gray<1> above;
+  static Gray<2> below;  // pyrDown writes (rows + 1) / 2 x (cols + 1) / 2
+  above.rows = rows; above.cols = cols; above.size = rows * cols;
+  below.rows = rows2; below.cols = cols2; below.size = rows2 * cols2;
+#pragma HLS DATAFLOW
+  readLevel(in, above, rows * cols);
+  xf::cv::pyrDown<XF_8UC1, kDstMaxRows, kDstMaxCols, XF_NPPC1, false>(above, below);
+  writeOut(below, out, rows2 * cols2);
+}
+
 }  // namespace
 
-void preprocess(const ap_uint<32>* bgr, ap_int<8>* tensor, ap_uint<8>* pyr, int src_rows, int src_cols, int dst_rows, int dst_cols,
-                int input_shift) {
+void preprocess(const ap_uint<32>* bgr, ap_int<8>* tensor, ap_uint<8>* pyr, const ap_uint<8>* pyr_rd, int src_rows, int src_cols,
+                int dst_rows, int dst_cols, int input_shift) {
 #pragma HLS INTERFACE m_axi port = bgr offset = slave bundle = gmem0 depth = 2073600
 #pragma HLS INTERFACE m_axi port = tensor offset = slave bundle = gmem1 depth = 786432
 #pragma HLS INTERFACE m_axi port = pyr offset = slave bundle = gmem2 depth = 349696
+#pragma HLS INTERFACE m_axi port = pyr_rd offset = slave bundle = gmem3 depth = 349696
 #pragma HLS INTERFACE s_axilite port = src_rows
 #pragma HLS INTERFACE s_axilite port = src_cols
 #pragma HLS INTERFACE s_axilite port = dst_rows
@@ -77,37 +99,7 @@ void preprocess(const ap_uint<32>* bgr, ap_int<8>* tensor, ap_uint<8>* pyr, int 
     cols[l] = pyrCols(dst_cols, l);
     off[l] = pyrOffset(dst_rows, dst_cols, l);
   }
-  static Bgr src;
-  static BgrSmall small;
-  static Gray<1> g0;
-  static Gray<2> g1, g1b;
-  static Gray<4> g2, g2b;
-  static Gray<8> g3, g3b;
-  static Gray<16> g4;
-  src.rows = src_rows; src.cols = src_cols;
-  small.rows = dst_rows; small.cols = dst_cols;
-  g0.rows = rows[0]; g0.cols = cols[0];
-  g1.rows = g1b.rows = rows[1]; g1.cols = g1b.cols = cols[1];
-  g2.rows = g2b.rows = rows[2]; g2.cols = g2b.cols = cols[2];
-  g3.rows = g3b.rows = rows[3]; g3.cols = g3b.cols = cols[3];
-  g4.rows = rows[4]; g4.cols = cols[4];
-  src.size = src_rows * src_cols;
-  small.size = dst_rows * dst_cols;
-  g0.size = rows[0] * cols[0];
-  g1.size = g1b.size = rows[1] * cols[1];
-  g2.size = g2b.size = rows[2] * cols[2];
-  g3.size = g3b.size = rows[3] * cols[3];
-  g4.size = rows[4] * cols[4];
-#pragma HLS DATAFLOW
-  readFrame(bgr, src, src_rows * src_cols);
-  xf::cv::resize<XF_INTERPOLATION_BILINEAR, XF_8UC3, kSrcMaxRows, kSrcMaxCols, kDstMaxRows, kDstMaxCols, XF_NPPC1, false, 4>(src, small);
-  tensorAndGray(small, tensor, pyr + off[0], g0, rows[0] * cols[0], input_shift);
-  xf::cv::pyrDown<XF_8UC1, kDstMaxRows, kDstMaxCols, XF_NPPC1, false>(g0, g1);
-  writeAndPass(g1, pyr + off[1], g1b, rows[1] * cols[1]);
-  xf::cv::pyrDown<XF_8UC1, kDstMaxRows / 2, kDstMaxCols / 2, XF_NPPC1, false>(g1b, g2);
-  writeAndPass(g2, pyr + off[2], g2b, rows[2] * cols[2]);
-  xf::cv::pyrDown<XF_8UC1, kDstMaxRows / 4, kDstMaxCols / 4, XF_NPPC1, false>(g2b, g3);
-  writeAndPass(g3, pyr + off[3], g3b, rows[3] * cols[3]);
-  xf::cv::pyrDown<XF_8UC1, kDstMaxRows / 8, kDstMaxCols / 8, XF_NPPC1, false>(g3b, g4);
-  writeOut(g4, pyr + off[4], rows[4] * cols[4]);
+  frameToLevel0(bgr, tensor, pyr + off[0], src_rows, src_cols, rows[0], cols[0], input_shift);
+levels:
+  for (int l = 1; l < kPyrLevels; ++l) pyramidLevel(pyr_rd + off[l - 1], pyr + off[l], rows[l - 1], cols[l - 1], rows[l], cols[l]);
 }

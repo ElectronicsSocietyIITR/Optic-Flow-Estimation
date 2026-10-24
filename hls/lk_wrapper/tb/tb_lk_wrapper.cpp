@@ -31,8 +31,8 @@ int main(int argc, char** argv) {
       slot[k][i] = ap_uint<32>(bytes[4 * i]) | (ap_uint<32>(bytes[4 * i + 1]) << 8) | (ap_uint<32>(bytes[4 * i + 2]) << 16) |
                    (ap_uint<32>(bytes[4 * i + 3]) << 24);
   }
-  std::vector<ap_uint<32>> a(rows * cols, 0), b(rows * cols, 0);
-  lk_wrapper(slot[0].data(), slot[1].data(), a.data(), b.data(), rows, cols);
+  std::vector<ap_uint<32>> a(2 * rows * cols, 0);  // both halves; the result is in the first
+  lk_wrapper(slot[0].data(), slot[1].data(), a.data(), a.data(), rows, cols);
 
   std::vector<float> ref(rows * cols * 2);
   std::ifstream(argv[3], std::ios::binary).read(reinterpret_cast<char*>(ref.data()), ref.size() * sizeof(float));

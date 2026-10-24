@@ -48,10 +48,38 @@ void ttc_engine(hls::stream<Pixel>& in, const BoxRect boxes[kMaxBoxes], const Bo
     row_v[b] = fits[b].b0 - fits[b].b1 * px - fits[b].b2 * py;
   }
 
-  ap_int<64> acc[kMaxBoxes][kTerms];
-#pragma HLS ARRAY_PARTITION variable = acc complete dim = 0
-  for (int b = 0; b < kMaxBoxes; ++b)
-    for (int k = 0; k < kTerms; ++k) acc[b][k] = 0;
+  // Each sum at the width its worst case needs (2^18 pixels, |Ex|,|Ey| <= 2047, |G| <= 2^21, |Et| <= 255,
+  // |x|,|y| <= 1024, |u|,|v| <= 2^15): exact by construction, about 38 % fewer accumulator bits than int64.
+  // See docs/superpowers/reports/2026-10-fabric-budget.md, section 5.1.
+  struct Acc {
+    ap_int<41> exx, exy, eyy;
+    ap_int<51> exg, eyg;
+    ap_int<62> gg;
+    ap_int<38> ext, eyt;
+    ap_int<48> gt;
+    ap_int<35> tt;
+    ap_int<20> hn, fn;
+    ap_int<29> fx, fy;
+    ap_int<40> fxx, fxy, fyy;
+    ap_int<34> fu, fv;
+    ap_int<45> fxu, fyu, fxv, fyv;
+  };
+  Acc acc[kMaxBoxes];
+#pragma HLS ARRAY_PARTITION variable = acc complete
+  for (int b = 0; b < kMaxBoxes; ++b) {  // every field explicitly: Acc{} does not reliably zero ap_int members
+    Acc& a = acc[b];
+    a.exx = a.exy = a.eyy = 0;
+    a.exg = a.eyg = 0;
+    a.gg = 0;
+    a.ext = a.eyt = 0;
+    a.gt = 0;
+    a.tt = 0;
+    a.hn = a.fn = 0;
+    a.fx = a.fy = 0;
+    a.fxx = a.fxy = a.fyy = 0;
+    a.fu = a.fv = 0;
+    a.fxu = a.fyu = a.fxv = a.fyv = 0;
+  }
 
   ap_uint<9> line_s[2][kMaxWidth];  // S for rows y-2 and y-1
 #pragma HLS ARRAY_PARTITION variable = line_s complete dim = 1
@@ -78,20 +106,9 @@ rows:
             row_v[b] += b2[b];
           }
         const ap_int<11> fx = x - px, fy = y - py;
-        ap_int<64> fm[kFlowTerms];
-#pragma HLS ARRAY_PARTITION variable = fm complete
-        fm[0] = 1;
-        fm[1] = fx;
-        fm[2] = fy;
-        fm[3] = ap_int<64>(fx) * fx;
-        fm[4] = ap_int<64>(fx) * fy;
-        fm[5] = ap_int<64>(fy) * fy;
-        fm[6] = p.u;
-        fm[7] = p.v;
-        fm[8] = ap_int<64>(fx) * p.u;
-        fm[9] = ap_int<64>(fy) * p.u;
-        fm[10] = ap_int<64>(fx) * p.v;
-        fm[11] = ap_int<64>(fy) * p.v;
+        // Products at their natural widths, once per pixel, shared by every box.
+        const ap_int<22> mxx = fx * fx, mxy = fx * fy, myy = fy * fy;
+        const ap_int<27> mxu = fx * p.u, myu = fy * p.u, mxv = fx * p.v, myv = fy * p.v;
         for (int b = 0; b < kMaxBoxes; ++b) {
           // Residual to the fit's prediction in 1/64 px (floor shift, clamped to int16), the 1 px test.
           const ap_int<64> du64 = ((ap_int<64>(p.u) << kFitShift) - pred_u[b]) >> kFitShift;
@@ -102,8 +119,21 @@ rows:
           pred_u[b] += a1[b];  // next pixel
           pred_v[b] += b1[b];
           const bool inside = b < n_boxes && x >= fbox[b].x1 && x < fbox[b].x2 && y >= fbox[b].y1 && y < fbox[b].y2;
-          if (inside && inlier)
-            for (int k = 0; k < kFlowTerms; ++k) acc[b][kHornTerms + k] += fm[k];
+          if (inside && inlier) {
+            Acc& a = acc[b];
+            a.fn += 1;
+            a.fx += fx;
+            a.fy += fy;
+            a.fxx += mxx;
+            a.fxy += mxy;
+            a.fyy += myy;
+            a.fu += p.u;
+            a.fv += p.v;
+            a.fxu += mxu;
+            a.fyu += myu;
+            a.fxv += mxv;
+            a.fyv += myv;
+          }
         }
       }
       const ap_uint<9> s_new = p.prev + p.curr;
@@ -135,30 +165,39 @@ rows:
       const int cx = x - 1, cy = y - 1;
       const ap_int<11> rx = cx - px, ry = cy - py;
       const ap_int<22> g = rx * ex + ry * ey;
-      // Products computed once per pixel, shared by every box.
-      ap_int<64> prod[kHornTerms];
-#pragma HLS ARRAY_PARTITION variable = prod complete
-      prod[0] = ap_int<64>(ex) * ex;
-      prod[1] = ap_int<64>(ex) * ey;
-      prod[2] = ap_int<64>(ex) * g;
-      prod[3] = ap_int<64>(ey) * ey;
-      prod[4] = ap_int<64>(ey) * g;
-      prod[5] = ap_int<64>(g) * g;
-      prod[6] = ap_int<64>(ex) * et;
-      prod[7] = ap_int<64>(ey) * et;
-      prod[8] = ap_int<64>(g) * et;
-      prod[9] = ap_int<64>(et) * et;
-      prod[10] = 1;
+      // Products at their natural widths, once per pixel, shared by every box.
+      const ap_int<24> pxx = ex * ex, pxy = ex * ey, pyy = ey * ey;
+      const ap_int<34> pxg = ex * g, pyg = ey * g;
+      const ap_int<44> pgg = g * g;
+      const ap_int<21> pxt = ex * et, pyt = ey * et;
+      const ap_int<31> pgt = g * et;
+      const ap_int<18> ptt = et * et;
       for (int b = 0; b < kMaxBoxes; ++b) {
         const bool inside = b < n_boxes && cx >= box[b].x1 && cx < box[b].x2 && cy >= box[b].y1 && cy < box[b].y2;
-        if (inside)
-          for (int k = 0; k < kHornTerms; ++k) acc[b][k] += prod[k];
+        if (inside) {
+          Acc& a = acc[b];
+          a.exx += pxx;
+          a.exy += pxy;
+          a.exg += pxg;
+          a.eyy += pyy;
+          a.eyg += pyg;
+          a.gg += pgg;
+          a.ext += pxt;
+          a.eyt += pyt;
+          a.gt += pgt;
+          a.tt += ptt;
+          a.hn += 1;
+        }
       }
     }
   }
 
-  for (int b = 0; b < kMaxBoxes; ++b)
-    for (int k = 0; k < kTerms; ++k) sums[b][k] = acc[b][k];
+  for (int b = 0; b < kMaxBoxes; ++b) {  // term order of kTerms (ttc_engine.hpp)
+    const Acc& a = acc[b];
+    const ap_int<64> t[kTerms] = {a.exx, a.exy, a.exg, a.eyy, a.eyg, a.gg, a.ext, a.eyt, a.gt, a.tt, a.hn,
+                                  a.fn,  a.fx,  a.fy,  a.fxx, a.fxy, a.fyy, a.fu, a.fv, a.fxu, a.fyu, a.fxv, a.fyv};
+    for (int k = 0; k < kTerms; ++k) sums[b][k] = t[k];
+  }
 }
 
 void pixelsToSums(const ap_uint<8>* prev, const ap_uint<8>* curr, const ap_uint<32>* flow, const BoxRect box[kMaxBoxes],
@@ -177,15 +216,15 @@ void ttc_engine_top(const ap_uint<8>* prev, const ap_uint<8>* curr, const ap_uin
 #pragma HLS INTERFACE m_axi port = boxes offset = slave bundle = gmem4 depth = 64
 #pragma HLS INTERFACE m_axi port = flow_boxes offset = slave bundle = gmem4 depth = 64
 #pragma HLS INTERFACE m_axi port = fits offset = slave bundle = gmem4 depth = 96
-#pragma HLS INTERFACE s_axilite port = fit_valid bundle = control
-#pragma HLS INTERFACE s_axilite port = inlier_q bundle = control
-#pragma HLS INTERFACE s_axilite port = n_boxes bundle = control
-#pragma HLS INTERFACE s_axilite port = width bundle = control
-#pragma HLS INTERFACE s_axilite port = height bundle = control
-#pragma HLS INTERFACE s_axilite port = px bundle = control
-#pragma HLS INTERFACE s_axilite port = py bundle = control
-#pragma HLS INTERFACE s_axilite port = threshold bundle = control
-#pragma HLS INTERFACE s_axilite port = return bundle = control
+#pragma HLS INTERFACE s_axilite port = fit_valid
+#pragma HLS INTERFACE s_axilite port = inlier_q
+#pragma HLS INTERFACE s_axilite port = n_boxes
+#pragma HLS INTERFACE s_axilite port = width
+#pragma HLS INTERFACE s_axilite port = height
+#pragma HLS INTERFACE s_axilite port = px
+#pragma HLS INTERFACE s_axilite port = py
+#pragma HLS INTERFACE s_axilite port = threshold
+#pragma HLS INTERFACE s_axilite port = return
   BoxRect box[kMaxBoxes], fbox[kMaxBoxes];
   FitQ fit[kMaxBoxes];
 tables:

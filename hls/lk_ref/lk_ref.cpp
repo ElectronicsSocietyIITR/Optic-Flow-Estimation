@@ -6,6 +6,12 @@
 // Drives AMD's kernels (pyrDown + one LK pass per call) as their L1 testbench does: 5 levels x
 // 5 iterations, flow ping-ponged between calls. Flow format (from AMD's source): 32 bits per
 // pixel, u in the upper 16, v in the lower 16, each ap_fixed<16,10> = 1/64 px, the engine's format.
+#include "../common/fcw_pyr_dense_optical_flow.hpp"  // the board's LK (FCW fork), not the library's
+#include "xf_config_params.h"
+#ifdef LK_LINES  // the remap line buffer, as hls/lk_wrapper builds it (-DLK_LINES)
+#undef NUM_LINES_FINDIT
+#define NUM_LINES_FINDIT LK_LINES
+#endif
 #include "xf_pyr_dense_optical_flow_accel.cpp"
 
 #include <opencv2/imgcodecs.hpp>
