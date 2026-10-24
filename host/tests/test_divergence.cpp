@@ -103,3 +103,34 @@ TEST(DivergenceParity, PredictedMask) {
     EXPECT_EQ(stale.second, g.num(k + "_stale_used") != 0) << k << " stale";
   }
 }
+
+// quantise_flow in divergence.py: np.round (half to even) of flow * 64, clipped to int16.
+TEST(QuantiseFlow, RoundsHalfToEvenAndSaturatesLikeNumpy) {
+  const float px[] = {0.5f / 64, 1.5f / 64, 2.5f / 64, -0.5f / 64, -1.5f / 64, 0.3f / 64, 511.99f, 600.0f, -600.0f, -512.0f};
+  const short want_u[] = {0, 2, 2, 0, -2, 0, 32767, 32767, -32768, -32768};
+  const short want_v[] = {0, -2, -2, 0, 2, 0, -32767, -32768, 32767, 32767};  // v = -u
+  cv::Mat flow(1, 10, CV_32FC2);
+  for (int i = 0; i < 10; ++i) flow.at<cv::Vec2f>(0, i) = {px[i], -px[i]};
+  const cv::Mat q = fcw::quantiseFlow(flow);
+  ASSERT_EQ(q.type(), CV_16SC2);
+  for (int i = 0; i < 10; ++i) {
+    EXPECT_EQ(q.at<cv::Vec2s>(0, i)[0], want_u[i]) << px[i];
+    EXPECT_EQ(q.at<cv::Vec2s>(0, i)[1], want_v[i]) << -px[i];
+  }
+}
+
+TEST(QuantiseFlow, MatchesTheScalarDefinitionOnAFullFrame) {
+  cv::Mat flow(288, 512, CV_32FC2);
+  cv::RNG rng(7);
+  rng.fill(flow, cv::RNG::UNIFORM, -40.0, 40.0);
+  for (int i = 0; i < 2000; ++i)  // exact ties: k/128 px
+    flow.at<cv::Vec2f>(rng.uniform(0, 288), rng.uniform(0, 512)) = {rng.uniform(-2000, 2000) / 128.0f, rng.uniform(-2000, 2000) / 128.0f};
+  const cv::Mat q = fcw::quantiseFlow(flow);
+  for (int y = 0; y < flow.rows; ++y)
+    for (int x = 0; x < flow.cols; ++x)
+      for (int c = 0; c < 2; ++c) {
+        const float f = flow.at<cv::Vec2f>(y, x)[c];
+        const short want = static_cast<short>(std::clamp(std::nearbyint(f * 64.0f), -32768.0f, 32767.0f));
+        ASSERT_EQ(q.at<cv::Vec2s>(y, x)[c], want) << y << "," << x << "," << c << " flow " << f;
+      }
+}

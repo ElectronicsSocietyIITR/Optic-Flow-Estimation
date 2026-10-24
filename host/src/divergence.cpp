@@ -130,14 +130,10 @@ cv::Mat robustMask(const cv::Mat& flow, const Box& b, cv::Point2d pp, const Dive
 }
 
 cv::Mat quantiseFlow(const cv::Mat& flow) {
-  cv::Mat q(flow.size(), CV_16SC2);
-  for (int y = 0; y < flow.rows; ++y)
-    for (int x = 0; x < flow.cols; ++x) {
-      const cv::Vec2f f = flow.at<cv::Vec2f>(y, x);
-      cv::Vec2s& o = q.at<cv::Vec2s>(y, x);
-      for (int c = 0; c < 2; ++c)
-        o[c] = static_cast<short>(std::clamp(std::nearbyint(f[c] * static_cast<float>(kFlowScale)), -32768.0f, 32767.0f));
-    }
+  // saturate_cast<short>: round half to even, then clip to int16 (np.round + np.clip); vectorised. The
+  // scalar loop it replaces cost 2.5 ms per 512x288 frame on the laptop, ~40 ms on an A53.
+  cv::Mat q;
+  flow.convertTo(q, CV_16SC2, kFlowScale);
   return q;
 }
 
