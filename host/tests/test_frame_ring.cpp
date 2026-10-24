@@ -8,6 +8,7 @@
 TEST(FrameRing, SizedForLookBackPlusFramesInFlight) {
   EXPECT_EQ(fcw::FrameRing<int>(8, 3).slots(), 12);  // scale search reads 8 back; 3 frames in flight
   EXPECT_EQ(fcw::FrameRing<int>(1, 3).slots(), 5);
+  EXPECT_EQ(fcw::FrameRing<int>(1, 6).slots(), 8);  // the board's pyramid ring: T2 up to 7 frames ahead of the engine
 }
 
 TEST(FrameRing, LooksBackByFrameIndexEvenWhenFramesWereDropped) {

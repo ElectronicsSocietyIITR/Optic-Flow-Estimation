@@ -116,3 +116,38 @@ TEST(Runtime, MatchesTheSerialPipelineFrameByFrame) {
     }
   }
 }
+
+TEST(Runtime, ACustomAcceleratorWithItsOwnGrayGivesTheSameResults) {
+  // The board's accelerator stage (preprocess kernel, then LK || DPU) hands over a ready gray image;
+  // with the same frames, gray and flow, results must not change.
+  std::vector<fcw::CapturedFrame> video;
+  for (auto src = syntheticSource(12); auto f = src();) video.push_back(*f);
+  auto replay = [&video]() {
+    return [&video, i = std::make_shared<size_t>(0)]() -> std::optional<fcw::CapturedFrame> {
+      return *i < video.size() ? std::optional<fcw::CapturedFrame>(video[(*i)++]) : std::nullopt;
+    };
+  };
+  std::vector<fcw::FcwFrame> pc, board;
+  fcw::RuntimeOptions opt;
+  fcw::Runtime(fcw::FcwConfig{}, opt, replay(), oneCar(), fcw::disFlow(), [&](const fcw::FcwFrame& f) { pc.push_back(f); }).run();
+  auto dis = fcw::disFlow();
+  auto prev = std::make_shared<cv::Mat>();
+  fcw::Accelerator accel = [&, prev](const fcw::CapturedFrame& c) {
+    fcw::AcceleratedFrame a;
+    a.bgr = c.bgr;
+    a.t = c.t;
+    a.gray = fcw::bgrToGray(c.bgr);
+    if (!prev->empty()) a.flow = dis(*prev, a.gray);
+    a.detections = oneCar()(c.bgr);
+    *prev = a.gray;
+    return a;
+  };
+  fcw::Runtime(fcw::FcwConfig{}, opt, replay(), accel, [&](const fcw::FcwFrame& f) { board.push_back(f); }).run();
+  ASSERT_EQ(pc.size(), board.size());
+  for (size_t i = 0; i < pc.size(); ++i) {
+    EXPECT_EQ(pc[i].ego.rvec, board[i].ego.rvec) << i;
+    ASSERT_EQ(pc[i].objects.size(), board[i].objects.size()) << i;
+    for (size_t o = 0; o < pc[i].objects.size(); ++o)
+      if (pc[i].objects[o].estimate) EXPECT_EQ(pc[i].objects[o].estimate->eta, board[i].objects[o].estimate->eta) << i;
+  }
+}

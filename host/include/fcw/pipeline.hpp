@@ -108,6 +108,8 @@ class FcwPipeline {
   // processing size is used as is. Touches only frame-stage state, so frameStage(N+1) may run while
   // objectStage(N) does.
   FrameState frameStage(const cv::Mat& frame_bgr, double t);
+  // Same, with the gray image already made (the board's preprocess kernel); display_bgr is only shown.
+  FrameState frameStage(const cv::Mat& display_bgr, const cv::Mat& gray, double t);
   // Object stage: per-object TTC on object_workers threads (results merged in selection order), then
   // lead selection and the warning state machines. Frames must arrive in order.
   FcwFrame objectStage(FrameState s);

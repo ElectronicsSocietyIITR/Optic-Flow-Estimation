@@ -126,6 +126,19 @@ Runs only with the board. Each step lists its command and its pass condition; re
 5. **Cross-build** `fcw_app` on the board (`cmake -DFCW_BOARD=ON`), run on the demo clip and a live USB camera. Pass: per-stage latency histograms; 30 FPS sustained or the bottleneck named; capture-to-warning latency < 100 ms.
 6. **Power:** idle vs running from `xmutil platformstats`; recorded in the report.
 
+### Board backends (added 2026-10-24, pipelined design)
+
+The backends in `host/backends/board` (`fcw/board.hpp`) are written and compile-checked but have never run on the board. Test each before the full run:
+
+7. **Capture** (`gstCapture`): file through `decodebin` (check that it picks the VCU decoder, `GST_DEBUG=decodebin:4`) and a USB3 camera; BGRx frames, PTS timestamps 1/30 s apart. (Already verified on the PC with software decoders: `fcw_board_io_tests`.)
+8. **Display** (`DrmDisplay`): primary + ARGB overlay planes found on the DP CRTC; boxes and banner blend over the video without tearing.
+9. **Preprocess kernel**: output pyramid slot and INT8 tensor equal the C-simulation (`hls/preprocess`) on a recorded frame.
+10. **LK wrapper**: one start per frame pair; flow equals `hls/lk_ref` on the same pyramid (bit for bit); time per frame.
+11. **Horn engine** (`XrtMomentEngine`): per-box sums equal `SoftwareMomentEngine` on recorded frames; check the level sub-buffer offsets are accepted (64-byte aligned slots).
+12. **DPU** (`VartYolo`): `inputShift()` read from the xmodel; detections equal `decodeYolo` on the same raw outputs from the PC.
+13. **Ring sizing**: no `FrameRing` refusals over a 10-minute live run (8 slots for the default queues).
+14. **Full run**: `fcw_app --board --xclbin fcw.xclbin --xmodel yolov9t.xmodel --source <clip>`; per-stage times, throughput, power (`xmutil platformstats`).
+
 ### Exit (spec P1, board half)
 
 30 FPS on dash-cam clips on the KV260 with every stage measured; warnings identical to the PC C++ app on the same inputs (parity carried from Task 8).

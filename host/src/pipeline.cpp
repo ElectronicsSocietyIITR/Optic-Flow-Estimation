@@ -72,6 +72,17 @@ cv::Size processingSize(int width, int height, int target_width) {
 FcwFrame FcwPipeline::process(const cv::Mat& frame_bgr, double t) { return objectStage(frameStage(frame_bgr, t)); }
 
 FrameState FcwPipeline::frameStage(const cv::Mat& frame_bgr, double t) {
+  const auto start = std::chrono::steady_clock::now();
+  const cv::Size size(cfg_.frame_width, cfg_.frame_height);
+  cv::Mat frame;
+  if (frame_bgr.size() == size) frame = frame_bgr;  // already prepared (the runtime's T2 resized it)
+  else cv::resize(frame_bgr, frame, size);
+  FrameState s = frameStage(frame, bgrToGray(frame), t);
+  s.start = start;
+  return s;
+}
+
+FrameState FcwPipeline::frameStage(const cv::Mat& display_bgr, const cv::Mat& gray, double t) {
   FrameState s;
   s.start = std::chrono::steady_clock::now();
   FcwFrame& out = s.out;
@@ -79,10 +90,8 @@ FrameState FcwPipeline::frameStage(const cv::Mat& frame_bgr, double t) {
   double dt = prev_t_ ? t - *prev_t_ : 0.0;
   if (dt <= 0) dt = 1.0 / cfg_.default_fps;  // first frame, or a repeated/out-of-order timestamp
   if (!prev_t_ || t > *prev_t_) prev_t_ = t;  // never move the clock backwards
-  const cv::Size size(cfg_.frame_width, cfg_.frame_height);
-  if (frame_bgr.size() == size) out.frame = frame_bgr;  // already prepared (the runtime's T2 resized it)
-  else cv::resize(frame_bgr, out.frame, size);
-  s.gray = bgrToGray(out.frame);
+  out.frame = display_bgr;
+  s.gray = gray;
   s.prev_gray = ring_.empty() ? cv::Mat() : std::get<2>(ring_.back());
 
   auto mark = std::chrono::steady_clock::now();
@@ -150,7 +159,7 @@ FcwFrame FcwPipeline::objectStage(FrameState s) {
         fit_used[i] = true;
       }
     }
-    sums = engine_->run(s.prev_gray, s.gray, flow_q, boxes, pp_);
+    sums = engine_->run(s.prev_gray, s.gray, flow_q, boxes, pp_, out.index);
     out.timings_ms["engine"] = msSince(engine_mark);
   }
   std::vector<ObjectResult> objects(n);

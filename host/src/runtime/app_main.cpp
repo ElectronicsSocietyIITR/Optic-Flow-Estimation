@@ -4,7 +4,8 @@
 //
 // On the PC, detections come from a file recorded by the Python detector:
 //   python tools/export_golden.py --record-detections clip.mp4 --record-out dets.yml.gz
-// On the KV260 the VART DPU runner replaces it (plan 2, Task 10).
+// On the KV260 (built with -DFCW_BOARD=ON): --board --xclbin fcw.xclbin --xmodel yolov9t.xmodel; capture by
+// GStreamer, preprocessing / LK / Horn engine in the fabric, YOLO on the DPU, DRM display (plan 2, Task 10).
 #include <opencv2/highgui.hpp>
 #include <opencv2/videoio.hpp>
 
@@ -17,11 +18,15 @@
 #include <string>
 
 #include "fcw/runtime.hpp"
+#ifdef FCW_BOARD
+#include "fcw/board.hpp"
+#endif
 
 namespace {
 
 struct Args {
-  std::string source, detections, output;
+  std::string source, detections, output, xclbin, xmodel;
+  bool board = false;
   double fx = 500.0;
   int max_frames = 0;
   bool display = true;
@@ -41,6 +46,9 @@ Args parse(int argc, char** argv) {
     else if (k == "--output") a.output = next();
     else if (k == "--max-frames") a.max_frames = std::stoi(next());
     else if (k == "--no-display") a.display = false;
+    else if (k == "--board") a.board = true;
+    else if (k == "--xclbin") a.xclbin = next();
+    else if (k == "--xmodel") a.xmodel = next();
     else throw std::runtime_error("unknown argument " + k);
   }
   if (a.source.empty()) throw std::runtime_error("--source is required");
@@ -73,9 +81,57 @@ fcw::DetectorFn recordedDetector(const std::string& path) {
 
 }  // namespace
 
+#ifdef FCW_BOARD
+// Board: GStreamer -> preprocess kernel -> LK kernel || DPU -> frame stage -> object stage (PL engine) -> DRM.
+int runBoard(const Args& args) {
+  auto camera = fcw::board::gstCapture(args.source);
+  auto first = camera();
+  if (!first) throw std::runtime_error("no frames from " + args.source);
+  const cv::Size src = first->bgr.size(), proc = fcw::processingSize(src.width, src.height);
+  fcw::FcwConfig cfg;
+  cfg.fx = args.fx;
+  cfg.frame_width = proc.width;
+  cfg.frame_height = proc.height;
+  cfg.fy = args.fx * (static_cast<double>(proc.height) / src.height) / (static_cast<double>(proc.width) / src.width);
+  fcw::board::XrtAccelerator accel(args.xclbin, args.xmodel, cfg, src);
+  std::unique_ptr<fcw::board::DrmDisplay> display;
+  if (args.display) display = std::make_unique<fcw::board::DrmDisplay>();
+  int count = 0;
+  fcw::CaptureSource source = [&]() -> std::optional<fcw::CapturedFrame> {
+    if (args.max_frames && count >= args.max_frames) return std::nullopt;
+    ++count;
+    if (first) return std::exchange(first, std::nullopt);
+    return camera();
+  };
+  fcw::RuntimeOptions opt;
+  opt.live = args.source.rfind("/dev/video", 0) == 0;
+  std::vector<fcw::Level> levels;
+  std::vector<double> totals;
+  fcw::Runtime runtime(cfg, opt, source, [&](const fcw::CapturedFrame& f) { return accel(f); }, [&](const fcw::FcwFrame& f) {
+    levels.push_back(f.level());
+    totals.push_back(f.timings_ms.at("total"));
+    if (display) display->show(f, proc);
+  });
+  runtime.setMomentEngine(accel.momentEngine());
+  const auto start = std::chrono::steady_clock::now();
+  const fcw::RuntimeStats stats = runtime.run();
+  const double wall_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  std::cout << fcw::summaryLine(levels, totals) << " | dropped " << stats.dropped << "\n";
+  std::printf("throughput %.1f FPS (%d frames in %.2f s wall)\n", stats.processed / wall_s, stats.processed, wall_s);
+  return 0;
+}
+#endif
+
 int main(int argc, char** argv) {
   try {
     const Args args = parse(argc, argv);
+    if (args.board) {
+#ifdef FCW_BOARD
+      return runBoard(args);
+#else
+      throw std::runtime_error("--board needs a build with -DFCW_BOARD=ON (on the KV260)");
+#endif
+    }
     const bool live = !args.source.empty() && std::isdigit(static_cast<unsigned char>(args.source[0])) && args.source.size() <= 2;
     auto cap = std::make_shared<cv::VideoCapture>();
     if (live) cap->open(std::stoi(args.source)); else cap->open(args.source);

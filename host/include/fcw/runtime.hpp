@@ -80,6 +80,19 @@ struct CapturedFrame {
 };
 
 using CaptureSource = std::function<std::optional<CapturedFrame>()>;  // empty: end of stream
+
+// What the accelerator stage (T2) makes of one frame: the frame to show, flow and detections, and the
+// gray image when the accelerators already made it (the board's preprocess kernel; empty on the PC).
+struct AcceleratedFrame {
+  cv::Mat bgr;
+  double t = 0;
+  cv::Mat gray;
+  cv::Mat flow;
+  std::vector<Detection> detections;
+};
+using Accelerator = std::function<AcceleratedFrame(const CapturedFrame&)>;  // called in order, one frame at a time
+// The PC's T2: resize to the processing size, then flow (from the previous frame) || detection.
+Accelerator pcAccelerator(const FcwConfig& cfg, DetectorFn detector, FlowSource flow);
 using Sink = std::function<void(const FcwFrame&)>;
 
 struct RuntimeOptions {
@@ -100,15 +113,18 @@ struct RuntimeStats {
 class Runtime {
  public:
   Runtime(FcwConfig cfg, RuntimeOptions opt, CaptureSource source, DetectorFn detector, FlowSource flow, Sink sink);
+  Runtime(FcwConfig cfg, RuntimeOptions opt, CaptureSource source, Accelerator accelerator, Sink sink);
   RuntimeStats run();  // returns when the source is exhausted and every frame has been rendered
+  // The Horn / moment engine for the object stage (default: software; on the board the PL engine).
+  void setMomentEngine(std::unique_ptr<MomentEngine> engine) { engine_ = std::move(engine); }
 
  private:
   FcwConfig cfg_;
   RuntimeOptions opt_;
   CaptureSource source_;
-  DetectorFn detector_;
-  FlowSource flow_;
+  Accelerator accel_;
   Sink sink_;
+  std::unique_ptr<MomentEngine> engine_;
 };
 
 // Same summary as `python -m collision_avoidance.fcw` (first frame excluded from the mean).

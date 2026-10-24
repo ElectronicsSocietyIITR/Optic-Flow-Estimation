@@ -56,7 +56,21 @@ static int runCase(const std::string& name, bool via_top) {
     std::vector<ap_uint<8>> p8(prev.begin(), prev.end()), c8(curr.begin(), curr.end());
     std::vector<ap_uint<32>> packed(w * h);
     for (int i = 0; i < w * h; ++i) packed[i] = (ap_uint<32>(ap_uint<16>(flow[2 * i])) << 16) | ap_uint<16>(flow[2 * i + 1]);
-    ttc_engine_top(p8.data(), c8.data(), packed.data(), boxes, flow_boxes, fits, fit_valid, inlier_q, n, w, h, px, py, thr, sums);
+    std::vector<ap_uint<32>> bw(4 * kMaxBoxes), fw(4 * kMaxBoxes);
+    std::vector<ap_int<64>> qw(6 * kMaxBoxes);
+    for (int b = 0; b < kMaxBoxes; ++b) {
+      const BoxRect r[2] = {boxes[b], flow_boxes[b]};
+      for (int k = 0; k < 2; ++k) {
+        auto& out = k ? fw : bw;
+        out[4 * b] = r[k].x1; out[4 * b + 1] = r[k].y1; out[4 * b + 2] = r[k].x2; out[4 * b + 3] = r[k].y2;
+      }
+      const ap_int<64> c[6] = {fits[b].a0, fits[b].a1, fits[b].a2, fits[b].b0, fits[b].b1, fits[b].b2};
+      for (int k = 0; k < 6; ++k) qw[6 * b + k] = c[k];
+    }
+    static ap_int<64> flat[kMaxBoxes * kTerms];
+    ttc_engine_top(p8.data(), c8.data(), packed.data(), bw.data(), fw.data(), qw.data(), fit_valid, inlier_q, n, w, h, px, py, thr, flat);
+    for (int b = 0; b < kMaxBoxes; ++b)
+      for (int k = 0; k < kTerms; ++k) sums[b][k] = flat[b * kTerms + k];
   } else {
     hls::stream<Pixel> in;
     for (int i = 0; i < w * h; ++i) in.write({prev[i], curr[i], flow[2 * i], flow[2 * i + 1]});

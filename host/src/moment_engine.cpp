@@ -6,7 +6,7 @@
 namespace fcw {
 
 std::vector<BoxSums> SoftwareMomentEngine::run(const cv::Mat& prev, const cv::Mat& curr, const cv::Mat& flow_q,
-                                               const std::vector<EngineBox>& boxes, cv::Point2d pp) {
+                                               const std::vector<EngineBox>& boxes, cv::Point2d pp, int /*frame_index*/) {
   std::vector<BoxSums> out(boxes.size());
   std::map<int, std::pair<cv::Mat, cv::Mat>> levels;  // one pass per level in use, as the engine runs
   const cv::Point ppi(static_cast<int>(std::nearbyint(pp.x)), static_cast<int>(std::nearbyint(pp.y)));

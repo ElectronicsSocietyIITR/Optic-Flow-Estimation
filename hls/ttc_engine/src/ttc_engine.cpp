@@ -161,17 +161,22 @@ rows:
     for (int k = 0; k < kTerms; ++k) sums[b][k] = acc[b][k];
 }
 
-void ttc_engine_top(const ap_uint<8>* prev, const ap_uint<8>* curr, const ap_uint<32>* flow, const BoxRect boxes[kMaxBoxes],
-                    const BoxRect flow_boxes[kMaxBoxes], const FitQ fits[kMaxBoxes], ap_uint<kMaxBoxes> fit_valid,
-                    ap_uint<16> inlier_q, ap_uint<5> n_boxes, ap_uint<10> width, ap_uint<10> height, ap_int<11> px, ap_int<11> py,
-                    ap_uint<13> threshold, ap_int<64> sums[kMaxBoxes][kTerms]) {
+void pixelsToSums(const ap_uint<8>* prev, const ap_uint<8>* curr, const ap_uint<32>* flow, const BoxRect box[kMaxBoxes],
+                  const BoxRect fbox[kMaxBoxes], const FitQ fit[kMaxBoxes], ap_uint<kMaxBoxes> fit_valid, ap_uint<16> inlier_q,
+                  ap_uint<5> n_boxes, ap_uint<10> width, ap_uint<10> height, ap_int<11> px, ap_int<11> py, ap_uint<13> threshold,
+                  ap_int<64> acc[kMaxBoxes][kTerms]);
+
+void ttc_engine_top(const ap_uint<8>* prev, const ap_uint<8>* curr, const ap_uint<32>* flow, const ap_uint<32>* boxes,
+                    const ap_uint<32>* flow_boxes, const ap_int<64>* fits, ap_uint<kMaxBoxes> fit_valid, ap_uint<16> inlier_q,
+                    ap_uint<5> n_boxes, ap_uint<10> width, ap_uint<10> height, ap_int<11> px, ap_int<11> py, ap_uint<13> threshold,
+                    ap_int<64> sums[kMaxBoxes * kTerms]) {
 #pragma HLS INTERFACE m_axi port = prev offset = slave bundle = gmem0 depth = 262144
 #pragma HLS INTERFACE m_axi port = curr offset = slave bundle = gmem1 depth = 262144
 #pragma HLS INTERFACE m_axi port = flow offset = slave bundle = gmem2 depth = 262144
-#pragma HLS INTERFACE m_axi port = sums offset = slave bundle = gmem3
-#pragma HLS INTERFACE s_axilite port = boxes bundle = control
-#pragma HLS INTERFACE s_axilite port = flow_boxes bundle = control
-#pragma HLS INTERFACE s_axilite port = fits bundle = control
+#pragma HLS INTERFACE m_axi port = sums offset = slave bundle = gmem3 depth = 368
+#pragma HLS INTERFACE m_axi port = boxes offset = slave bundle = gmem4 depth = 64
+#pragma HLS INTERFACE m_axi port = flow_boxes offset = slave bundle = gmem4 depth = 64
+#pragma HLS INTERFACE m_axi port = fits offset = slave bundle = gmem4 depth = 96
 #pragma HLS INTERFACE s_axilite port = fit_valid bundle = control
 #pragma HLS INTERFACE s_axilite port = inlier_q bundle = control
 #pragma HLS INTERFACE s_axilite port = n_boxes bundle = control
@@ -181,6 +186,26 @@ void ttc_engine_top(const ap_uint<8>* prev, const ap_uint<8>* curr, const ap_uin
 #pragma HLS INTERFACE s_axilite port = py bundle = control
 #pragma HLS INTERFACE s_axilite port = threshold bundle = control
 #pragma HLS INTERFACE s_axilite port = return bundle = control
+  BoxRect box[kMaxBoxes], fbox[kMaxBoxes];
+  FitQ fit[kMaxBoxes];
+tables:
+  for (int b = 0; b < kMaxBoxes; ++b) {
+    box[b] = {boxes[4 * b], boxes[4 * b + 1], boxes[4 * b + 2], boxes[4 * b + 3]};
+    fbox[b] = {flow_boxes[4 * b], flow_boxes[4 * b + 1], flow_boxes[4 * b + 2], flow_boxes[4 * b + 3]};
+    fit[b] = {fits[6 * b], fits[6 * b + 1], fits[6 * b + 2], fits[6 * b + 3], fits[6 * b + 4], fits[6 * b + 5]};
+  }
+  ap_int<64> acc[kMaxBoxes][kTerms];
+  pixelsToSums(prev, curr, flow, box, fbox, fit, fit_valid, inlier_q, n_boxes, width, height, px, py, threshold, acc);
+out:
+  for (int b = 0; b < kMaxBoxes; ++b)
+    for (int k = 0; k < kTerms; ++k) sums[b * kTerms + k] = acc[b][k];
+}
+
+// Packer + core in one dataflow region (the stream between them never leaves the fabric).
+void pixelsToSums(const ap_uint<8>* prev, const ap_uint<8>* curr, const ap_uint<32>* flow, const BoxRect box[kMaxBoxes],
+                  const BoxRect fbox[kMaxBoxes], const FitQ fit[kMaxBoxes], ap_uint<kMaxBoxes> fit_valid, ap_uint<16> inlier_q,
+                  ap_uint<5> n_boxes, ap_uint<10> width, ap_uint<10> height, ap_int<11> px, ap_int<11> py, ap_uint<13> threshold,
+                  ap_int<64> acc[kMaxBoxes][kTerms]) {
 #pragma HLS DATAFLOW
   hls::stream<Pixel> pixels("pixels");
 #pragma HLS STREAM variable = pixels depth = 64
@@ -196,5 +221,5 @@ pack:
     p.v = ap_int<16>(w.range(15, 0));
     pixels.write(p);
   }
-  ttc_engine(pixels, boxes, flow_boxes, fits, fit_valid, inlier_q, n_boxes, width, height, px, py, threshold, sums);
+  ttc_engine(pixels, box, fbox, fit, fit_valid, inlier_q, n_boxes, width, height, px, py, threshold, acc);
 }

@@ -9,24 +9,33 @@
 
 namespace fcw {
 
-namespace {
-
-struct Work {
-  cv::Mat bgr;  // already resized to the processing size
-  double t = 0;
-  cv::Mat flow;
-  std::vector<Detection> detections;
-};
-
-}  // namespace
+Accelerator pcAccelerator(const FcwConfig& cfg, DetectorFn detector, FlowSource flow) {
+  auto prev_gray = std::make_shared<cv::Mat>();
+  const cv::Size size(cfg.frame_width, cfg.frame_height);
+  return [=](const CapturedFrame& f) {
+    AcceleratedFrame a;
+    cv::resize(f.bgr, a.bgr, size);
+    a.t = f.t;
+    const cv::Mat gray = bgrToGray(a.bgr);
+    // Flow and detection are independent (the fabric's LK and the DPU on the board): run them together.
+    auto dets = std::async(std::launch::async, [&] { return detector(a.bgr); });
+    if (!prev_gray->empty()) a.flow = flow(*prev_gray, gray);
+    a.detections = dets.get();
+    *prev_gray = gray;
+    return a;  // gray stays empty: the frame stage makes it (same bytes)
+  };
+}
 
 Runtime::Runtime(FcwConfig cfg, RuntimeOptions opt, CaptureSource source, DetectorFn detector, FlowSource flow, Sink sink)
-    : cfg_(std::move(cfg)), opt_(opt), source_(std::move(source)), detector_(std::move(detector)), flow_(std::move(flow)),
+    : cfg_(std::move(cfg)), opt_(opt), source_(std::move(source)), accel_(pcAccelerator(cfg_, std::move(detector), std::move(flow))),
       sink_(std::move(sink)) {}
+
+Runtime::Runtime(FcwConfig cfg, RuntimeOptions opt, CaptureSource source, Accelerator accelerator, Sink sink)
+    : cfg_(std::move(cfg)), opt_(opt), source_(std::move(source)), accel_(std::move(accelerator)), sink_(std::move(sink)) {}
 
 RuntimeStats Runtime::run() {
   BoundedQueue<CapturedFrame> captured(opt_.capture_queue);
-  BoundedQueue<Work> work(opt_.work_queue);
+  BoundedQueue<AcceleratedFrame> work(opt_.work_queue);
   BoundedQueue<FrameState> perceived(opt_.perception_queue);
   BoundedQueue<FcwFrame> rendered(opt_.render_queue);
   RuntimeStats stats;
@@ -43,33 +52,21 @@ RuntimeStats Runtime::run() {
     captured.close();
   });
 
-  std::thread t2([&] {  // accelerators: DPU detector + flow (Vitis LK on the board)
-    cv::Mat prev_gray;
-    while (auto f = captured.pop()) {
-      Work w;
-      cv::resize(f->bgr, w.bgr, cv::Size(cfg_.frame_width, cfg_.frame_height));
-      w.t = f->t;
-      cv::Mat gray;
-      gray = bgrToGray(w.bgr);
-      // Flow and detection are independent (the fabric's LK and the DPU on the board): run them together.
-      auto dets = std::async(std::launch::async, [&] { return detector_(w.bgr); });
-      if (!prev_gray.empty()) w.flow = flow_(prev_gray, gray);
-      w.detections = dets.get();
-      prev_gray = gray;
-      work.pushBlocking(std::move(w));
-    }
+  std::thread t2([&] {  // accelerators: PC (resize, flow || detection) or board (preprocess, LK || DPU)
+    while (auto f = captured.pop()) work.pushBlocking(accel_(*f));
     work.close();
   });
 
   // Perception in two stages on one pipeline: the frame stage of N+1 overlaps the object stage of N
   // (they touch disjoint state; see FcwPipeline::frameStage).
-  const Work* current = nullptr;
+  const AcceleratedFrame* current = nullptr;
   FcwPipeline pipe(
       cfg_, [&](const cv::Mat&) { return current->detections; }, [&](const cv::Mat&, const cv::Mat&) { return current->flow; });
+  if (engine_) pipe.setMomentEngine(std::move(engine_));
   std::thread t3a([&] {  // frame stage: tracker || ego-rotation
     while (auto w = work.pop()) {
       current = &*w;
-      perceived.pushBlocking(pipe.frameStage(w->bgr, w->t));
+      perceived.pushBlocking(w->gray.empty() ? pipe.frameStage(w->bgr, w->t) : pipe.frameStage(w->bgr, w->gray, w->t));
     }
     perceived.close();
   });

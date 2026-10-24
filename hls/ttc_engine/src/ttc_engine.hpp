@@ -43,7 +43,9 @@ void ttc_engine(hls::stream<Pixel>& in, const BoxRect boxes[kMaxBoxes], const Bo
 
 // Board top: reads gray t-1, gray t and the LK kernel's flow (32-bit words: u in the upper 16 bits,
 // v in the lower 16, ap_fixed<16,10> = 1/64 px) from DDR, packs them into the stream and runs the core.
-void ttc_engine_top(const ap_uint<8>* prev, const ap_uint<8>* curr, const ap_uint<32>* flow, const BoxRect boxes[kMaxBoxes],
-                    const BoxRect flow_boxes[kMaxBoxes], const FitQ fits[kMaxBoxes], ap_uint<kMaxBoxes> fit_valid,
-                    ap_uint<16> inlier_q, ap_uint<5> n_boxes, ap_uint<10> width, ap_uint<10> height, ap_int<11> px, ap_int<11> py,
-                    ap_uint<13> threshold, ap_int<64> sums[kMaxBoxes][kTerms]);
+// Tables as plain words (no struct layout for the host to guess): boxes, flow_boxes: x1 y1 x2 y2 per box;
+// fits: a0 a1 a2 b0 b1 b2 per box.
+void ttc_engine_top(const ap_uint<8>* prev, const ap_uint<8>* curr, const ap_uint<32>* flow, const ap_uint<32>* boxes,
+                    const ap_uint<32>* flow_boxes, const ap_int<64>* fits, ap_uint<kMaxBoxes> fit_valid, ap_uint<16> inlier_q,
+                    ap_uint<5> n_boxes, ap_uint<10> width, ap_uint<10> height, ap_int<11> px, ap_int<11> py, ap_uint<13> threshold,
+                    ap_int<64> sums[kMaxBoxes * kTerms]);

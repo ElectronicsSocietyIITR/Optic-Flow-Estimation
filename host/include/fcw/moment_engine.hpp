@@ -29,16 +29,17 @@ struct BoxSums {
 class MomentEngine {
  public:
   virtual ~MomentEngine() = default;
-  // prev, curr: CV_8U gray at level 0; flow_q: CV_16SC2 in 1/64 px.
+  // prev, curr: CV_8U gray at level 0; flow_q: CV_16SC2 in 1/64 px. frame_index: curr's frame (the board
+  // engine reads the pyramid slots of frame_index - 1 and frame_index from DDR; software ignores it).
   virtual std::vector<BoxSums> run(const cv::Mat& prev, const cv::Mat& curr, const cv::Mat& flow_q, const std::vector<EngineBox>& boxes,
-                                   cv::Point2d principal) = 0;
+                                   cv::Point2d principal, int frame_index) = 0;
 };
 
 class SoftwareMomentEngine : public MomentEngine {
  public:
   SoftwareMomentEngine(HornConfig horn, DivergenceConfig divergence) : horn_(horn), div_(divergence) {}
   std::vector<BoxSums> run(const cv::Mat& prev, const cv::Mat& curr, const cv::Mat& flow_q, const std::vector<EngineBox>& boxes,
-                           cv::Point2d principal) override;
+                           cv::Point2d principal, int frame_index = 0) override;
 
  private:
   HornConfig horn_;
