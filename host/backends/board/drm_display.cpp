@@ -14,6 +14,7 @@
 #include <stdexcept>
 
 #include "fcw/board.hpp"
+#include "fcw/overlay.hpp"
 
 namespace fcw::board {
 
@@ -67,6 +68,7 @@ struct DrmDisplay::Impl {
   uint32_t crtc = 0, connector = 0, primary = 0, overlay = 0;
   drmModeModeInfo mode{};
   DumbBuffer video[2], annot[2];
+  OverlayPainter painter[2];  // one per overlay buffer: each clears only what it drew there last time
   int current = 0;
 };
 
@@ -129,22 +131,18 @@ void DrmDisplay::show(const FcwFrame& f, cv::Size processing) {
   cv::Mat screen(H, W, CV_8UC4, v.map, v.pitch);
   const cv::Rect shown(0, 0, std::min(W, f.frame.cols), std::min(H, f.frame.rows));
   f.frame(shown).copyTo(screen(shown));  // BGRx == XRGB8888 in memory
-  // Annotations: on the overlay plane if there is one, else straight into the video buffer.
-  cv::Mat annot = d.overlay ? cv::Mat(H, W, CV_8UC4, d.annot[d.current].map, d.annot[d.current].pitch) : screen;
-  if (d.overlay) annot.setTo(cv::Scalar(0, 0, 0, 0));  // transparent
-  const double sx = static_cast<double>(f.frame.cols) / processing.width, sy = static_cast<double>(f.frame.rows) / processing.height;
-  for (const ObjectResult& o : f.objects) {
-    const cv::Scalar color = o.level == Level::Critical ? cv::Scalar(0, 0, 255, 255)
-                             : o.level == Level::Warning ? cv::Scalar(0, 165, 255, 255) : cv::Scalar(160, 160, 160, 200);
-    const cv::Rect r(cv::Point(static_cast<int>(o.bbox.x1 * sx), static_cast<int>(o.bbox.y1 * sy)),
-                     cv::Point(static_cast<int>(o.bbox.x2 * sx), static_cast<int>(o.bbox.y2 * sy)));
-    cv::rectangle(annot, r, color, o.level == Level::None ? 2 : 4);
-    if (o.estimate && o.estimate->ttc_s)
-      cv::putText(annot, cv::format("%.1f s", *o.estimate->ttc_s), r.tl() + cv::Point(0, -6), cv::FONT_HERSHEY_SIMPLEX, 0.8, color, 2);
+  // Annotations: on the overlay plane if there is one, else straight into the (just rewritten) video buffer.
+  if (d.overlay) {
+    cv::Mat annot(H, W, CV_8UC4, d.annot[d.current].map, d.annot[d.current].pitch);
+    d.painter[d.current].paint(annot, f, processing, f.frame.size());
+  } else {
+    OverlayPainter().paint(screen, f, processing, f.frame.size());
   }
-  if (f.level() != Level::None)
-    cv::putText(annot, f.level() == Level::Critical ? "BRAKE" : "COLLISION WARNING", {24, 56}, cv::FONT_HERSHEY_SIMPLEX, 1.6,
-                f.level() == Level::Critical ? cv::Scalar(0, 0, 255, 255) : cv::Scalar(0, 165, 255, 255), 4);
+  // Flip both planes right after a vertical blank, so a scan-out never shows half of each frame.
+  drmVBlank vbl{};
+  vbl.request.type = DRM_VBLANK_RELATIVE;
+  vbl.request.sequence = 1;
+  drmWaitVBlank(d.fd, &vbl);
   drmModeSetPlane(d.fd, d.primary ? d.primary : 0, d.crtc, v.fb, 0, 0, 0, W, H, 0, 0, W << 16, H << 16);
   if (d.overlay)
     drmModeSetPlane(d.fd, d.overlay, d.crtc, d.annot[d.current].fb, 0, 0, 0, W, H, 0, 0, W << 16, H << 16);
