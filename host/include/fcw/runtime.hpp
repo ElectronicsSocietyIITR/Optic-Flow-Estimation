@@ -88,6 +88,7 @@ struct AcceleratedFrame {
   double t = 0;
   cv::Mat gray;
   cv::Mat flow;
+  cv::Mat flow_q;  // the flow in 1/64 px when the accelerator made it in that format (board); empty on the PC
   std::vector<Detection> detections;
 };
 using Accelerator = std::function<AcceleratedFrame(const CapturedFrame&)>;  // called in order, one frame at a time

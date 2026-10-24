@@ -66,7 +66,9 @@ RuntimeStats Runtime::run() {
   std::thread t3a([&] {  // frame stage: tracker || ego-rotation
     while (auto w = work.pop()) {
       current = &*w;
-      perceived.pushBlocking(w->gray.empty() ? pipe.frameStage(w->bgr, w->t) : pipe.frameStage(w->bgr, w->gray, w->t));
+      FrameState s = w->gray.empty() ? pipe.frameStage(w->bgr, w->t) : pipe.frameStage(w->bgr, w->gray, w->t);
+      s.flow_q = w->flow_q;
+      perceived.pushBlocking(std::move(s));
     }
     perceived.close();
   });

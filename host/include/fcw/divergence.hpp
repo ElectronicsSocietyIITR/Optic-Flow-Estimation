@@ -39,6 +39,8 @@ struct FitQ {
 using AffineFit = std::pair<cv::Vec3d, cv::Vec3d>;
 
 cv::Mat quantiseFlow(const cv::Mat& flow);  // CV_32FC2 px -> CV_16SC2 in 1/64 px (round half to even, clamped)
+// The Vitis LK kernel's output words (u: upper 16 bits, v: lower 16, 1/64 px) -> CV_16SC2 (u, v), vectorised.
+cv::Mat unpackFlowWords(const uint32_t* words, cv::Size size);
 std::optional<cv::Rect> flowRect(const Box& box, double shrink, int width, int height);
 std::optional<FixedMoments> flowMomentsFixed(const cv::Mat& flow_q, const Box& box, cv::Point2d principal, double shrink = 0.10,
                                              const cv::Mat& mask = {});

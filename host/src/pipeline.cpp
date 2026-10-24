@@ -138,9 +138,12 @@ FcwFrame FcwPipeline::objectStage(FrameState s) {
   for (const ScaleTrack* tr : selected) ids.push_back(tr->id);
   fusion_.prepare(ids);  // workers then only touch existing entries of their own track
   course_.prepare(ids);
-  const auto quantise_mark = std::chrono::steady_clock::now();
-  const cv::Mat flow_q = quantiseFlow(out.flow);  // divergence runs on the PL engine's flow format
-  out.timings_ms["quantise"] = msSince(quantise_mark);
+  cv::Mat flow_q = s.flow_q;  // divergence runs on the PL engine's flow format (1/64 px)
+  if (flow_q.empty()) {
+    const auto quantise_mark = std::chrono::steady_clock::now();
+    flow_q = quantiseFlow(out.flow);
+    out.timings_ms["quantise"] = msSince(quantise_mark);
+  }
 
   const int n = static_cast<int>(selected.size());
   // Option A: one engine call for every box, after the tracker, when each box's pyramid level and last

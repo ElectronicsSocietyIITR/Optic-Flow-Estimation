@@ -134,3 +134,21 @@ TEST(QuantiseFlow, MatchesTheScalarDefinitionOnAFullFrame) {
         ASSERT_EQ(q.at<cv::Vec2s>(y, x)[c], want) << y << "," << x << "," << c << " flow " << f;
       }
 }
+
+// The Vitis LK kernel's flow word: u in the upper 16 bits, v in the lower 16, both 1/64 px.
+TEST(UnpackFlowWords, SplitsTheVitisWordIntoUAndV) {
+  const short u[] = {0, 64, -64, 32767, -32768, 1, -1, 1000};
+  const short v[] = {0, -32, 96, -32768, 32767, -1, 1, -1000};
+  std::vector<uint32_t> words;
+  for (int i = 0; i < 8; ++i) words.push_back(static_cast<uint32_t>(static_cast<uint16_t>(u[i])) << 16 | static_cast<uint16_t>(v[i]));
+  const cv::Mat q = fcw::unpackFlowWords(words.data(), cv::Size(4, 2));
+  ASSERT_EQ(q.type(), CV_16SC2);
+  ASSERT_EQ(q.size(), cv::Size(4, 2));
+  for (int i = 0; i < 8; ++i) {
+    EXPECT_EQ(q.at<cv::Vec2s>(i / 4, i % 4)[0], u[i]) << i;
+    EXPECT_EQ(q.at<cv::Vec2s>(i / 4, i % 4)[1], v[i]) << i;
+  }
+  cv::Mat px;
+  q.convertTo(px, CV_32FC2, 1.0 / fcw::kFlowScale);  // and back: exact (k / 64 is exact in float)
+  EXPECT_EQ(cv::norm(fcw::quantiseFlow(px), q, cv::NORM_INF), 0.0);
+}

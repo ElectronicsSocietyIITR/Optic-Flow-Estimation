@@ -86,6 +86,7 @@ struct FcwFrame {
 struct FrameState {
   FcwFrame out;
   cv::Mat gray, prev_gray;
+  cv::Mat flow_q;  // CV_16SC2 in 1/64 px when the accelerator delivered it (board); else made from out.flow
   double yaw_rate = 0;
   std::map<int, ScaleTrack> tracks;
   std::deque<std::tuple<int, double, cv::Mat>> ring;  // (frame index, time, gray)

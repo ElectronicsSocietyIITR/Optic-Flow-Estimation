@@ -113,11 +113,8 @@ AcceleratedFrame XrtAccelerator::operator()(const CapturedFrame& f) {
   if (i > 0) {
     lk_run.wait();
     s.flow_a.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
-    const uint32_t* w = s.flow_a.map<const uint32_t*>();
-    a.flow = cv::Mat(d.proc, CV_32FC2);
-    for (int k = 0; k < d.proc.area(); ++k) {  // u: upper 16 bits, v: lower 16, 1/64 px
-      a.flow.ptr<cv::Vec2f>()[k] = {static_cast<int16_t>(w[k] >> 16) / 64.0f, static_cast<int16_t>(w[k] & 0xFFFF) / 64.0f};
-    }
+    a.flow_q = unpackFlowWords(s.flow_a.map<const uint32_t*>(), d.proc);  // the object stage uses it as is
+    a.flow_q.convertTo(a.flow, CV_32FC2, 1.0 / kFlowScale);           // px, for ego-rotation and the road
   }
   return a;
 }

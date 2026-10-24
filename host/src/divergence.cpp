@@ -137,6 +137,15 @@ cv::Mat quantiseFlow(const cv::Mat& flow) {
   return q;
 }
 
+cv::Mat unpackFlowWords(const uint32_t* words, cv::Size size) {
+  // Little-endian: as int16 pairs each word reads (v, u); swap the channels.
+  const cv::Mat vu(size, CV_16SC2, const_cast<uint32_t*>(words));
+  cv::Mat uv(size, CV_16SC2);
+  const int from_to[] = {0, 1, 1, 0};
+  cv::mixChannels(&vu, 1, &uv, 1, from_to, 2);
+  return uv;
+}
+
 std::optional<cv::Rect> flowRect(const Box& b, double shrink, int width, int height) {
   const double mx = shrink / 2 * (b.x2 - b.x1), my = shrink / 2 * (b.y2 - b.y1);
   const int x1 = std::max(0, static_cast<int>(std::ceil(b.x1 + mx))), y1 = std::max(0, static_cast<int>(std::ceil(b.y1 + my)));

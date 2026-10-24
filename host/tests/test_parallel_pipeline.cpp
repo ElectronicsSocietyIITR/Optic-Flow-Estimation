@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "fcw/divergence.hpp"
 #include "fcw/pipeline.hpp"
 #include "golden.hpp"
 
@@ -49,7 +50,8 @@ Scenario load(const golden::File& g, const std::string& name, const std::string&
 }
 
 // Serial reference (workers 0) or parallel; interleaved = frame stage of N+1 before the object stage of N.
-std::vector<fcw::FcwFrame> run(const Scenario& s, int workers, bool interleaved) {
+// give_flow_q: hand the object stage the flow already in 1/64 px, as the board's accelerator does.
+std::vector<fcw::FcwFrame> run(const Scenario& s, int workers, bool interleaved, bool give_flow_q = false) {
   int current = 0;
   fcw::FcwConfig cfg;
   cfg.object_workers = workers;
@@ -63,6 +65,7 @@ std::vector<fcw::FcwFrame> run(const Scenario& s, int workers, bool interleaved)
   std::optional<fcw::FrameState> pending;
   for (current = 0; current < static_cast<int>(s.frames.size()); ++current) {
     fcw::FrameState next = pipe.frameStage(s.frames[current], s.times[current]);
+    if (give_flow_q) next.flow_q = fcw::quantiseFlow(next.out.flow);
     if (pending) out.push_back(pipe.objectStage(std::move(*pending)));
     pending = std::move(next);
   }
@@ -118,4 +121,20 @@ TEST(ParallelPipeline, NoTracksIsFine) {
                         [](const cv::Mat& a, const cv::Mat&) { return cv::Mat::zeros(a.size(), CV_32FC2); });
   const cv::Mat black = cv::Mat::zeros(384, 512, CV_8UC3);
   for (int i = 0; i < 3; ++i) EXPECT_TRUE(pipe.process(black, i / 30.0).objects.empty());
+}
+
+// The board's accelerator delivers the LK flow in 1/64 px: the object stage uses it as is (no float round
+// trip, no requantising) and gives exactly the serial results.
+TEST(ParallelPipeline, UsesTheAcceleratorsFixedPointFlowWhenGiven) {
+  const std::string local = FCW_GOLDEN_LOCAL_DIR;
+  if (!std::filesystem::exists(local + "/pipeline.yml.gz")) GTEST_SKIP() << "run tools/export_golden.py --only pipeline";
+  golden::File g("pipeline", local);
+  std::stringstream names(g.str("scenarios"));
+  std::string name;
+  while (std::getline(names, name, ',')) {
+    const Scenario s = load(g, name, local);
+    const auto given = run(s, 3, true, true);
+    expectSame(run(s, 0, false), given, name + " flow_q given");
+    for (size_t f = 0; f < given.size(); ++f) EXPECT_EQ(given[f].timings_ms.count("quantise"), 0u) << name << " frame " << f;
+  }
 }
