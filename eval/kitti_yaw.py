@@ -15,18 +15,27 @@ import numpy as np
 from collision_avoidance.fcw import kitti
 from collision_avoidance.fcw.ego_rotation import EgoRotationEstimator
 from collision_avoidance.fcw.metrics import rms
-from collision_avoidance.fcw.pipeline import make_flow
+from collision_avoidance.fcw.pipeline import make_flow, processing_size
 from collision_avoidance.telemetry import start_run
 
 
 def evaluate_drive(drive_dir: Path, flow: str = "dis") -> tuple[np.ndarray, np.ndarray]:
     """(estimated, ground-truth) yaw rates in deg/s for every frame pair with a valid estimate."""
     images, times, K, wu = kitti.load_drive(drive_dir)
+    load = lambda p: cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+    if flow == "vitis":  # the kernel takes at most 512 px width: run at the processing size, intrinsics scaled
+        h0, w0 = load(images[0]).shape
+        w, h = processing_size(w0, h0)
+        K = np.diag([w / w0, h / h0, 1.0]) @ K
+        load = lambda p, w=w, h=h: cv2.resize(cv2.imread(str(p), cv2.IMREAD_GRAYSCALE), (w, h), interpolation=cv2.INTER_AREA)
     flow_source, estimator = make_flow(flow), EgoRotationEstimator(K)
+    if flow == "vitis":
+        grays = [load(p) for p in images]
+        flow_source.prefill(list(zip(grays, grays[1:])))
     est, gt = [], []
-    prev = cv2.imread(str(images[0]), cv2.IMREAD_GRAYSCALE)
+    prev = load(images[0])
     for i in range(1, len(images)):
-        curr = cv2.imread(str(images[i]), cv2.IMREAD_GRAYSCALE)
+        curr = load(images[i])
         ego = estimator.update(flow_source(prev, curr), [])
         dt = times[i] - times[i - 1]
         if ego.valid and dt > 0:
