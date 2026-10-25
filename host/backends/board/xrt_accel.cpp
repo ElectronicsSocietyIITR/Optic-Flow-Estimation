@@ -27,7 +27,7 @@
 namespace fcw::board {
 
 namespace {
-constexpr int kBoxes = 16, kTerms = 23;
+constexpr int kBoxes = 4, kTerms = 23;  // the engine's lanes (hls/ttc_engine TTC_LANES): boxes per start
 }
 
 struct XrtAccelerator::Impl {
@@ -135,31 +135,31 @@ class XrtMomentEngine : public MomentEngine {
     }
     std::vector<BoxSums> out(boxes.size());
     if (frame_index < 1 || boxes.empty()) return out;
-    const int n = std::min<int>(static_cast<int>(boxes.size()), kBoxes);
-    std::set<int> levels{0};  // level 0 always: every box's flow moments
-    for (int b = 0; b < n; ++b) levels.insert(boxes[b].level);
     auto& prev = d.slot(frame_index - 1);
     auto& curr = d.slot(frame_index);
-    for (const int L : levels) {
+    auto rect4 = [](const cv::Rect& r) {
+      return std::array<uint32_t, 4>{static_cast<uint32_t>(r.x), static_cast<uint32_t>(r.y), static_cast<uint32_t>(r.x + r.width),
+                                     static_cast<uint32_t>(r.y + r.height)};
+    };
+    for (const EnginePass& pass : planEnginePasses(boxes, kBoxes)) {  // up to kBoxes boxes per start
+      const int L = pass.level, n = static_cast<int>(pass.boxes.size());
       const int rows = pyrRows(d.proc.height, L), cols = pyrCols(d.proc.width, L), off = pyrOffset(d.proc.height, d.proc.width, L);
       const double f = std::pow(2.0, -L);
       std::vector<uint32_t> bw(kBoxes * 4, 0), fw(kBoxes * 4, 0);
       std::vector<int64_t> qw(kBoxes * 6, 0);
       uint32_t fit_valid = 0;
-      for (int b = 0; b < n; ++b) {
-        const Box& box = boxes[b].box;
-        if (boxes[b].level == L)
+      for (int j = 0; j < n; ++j) {  // lane j carries box pass.boxes[j]
+        const EngineBox& eb = boxes[pass.boxes[j]];
+        const Box& box = eb.box;
+        if (eb.level == L)
           if (auto r = innerBox({box.x1 * f, box.y1 * f, box.x2 * f, box.y2 * f}, d.cfg.horn.shrink, cols, rows))
-            std::copy_n(std::array<uint32_t, 4>{static_cast<uint32_t>(r->x), static_cast<uint32_t>(r->y), static_cast<uint32_t>(r->x + r->width),
-                                                static_cast<uint32_t>(r->y + r->height)}.begin(), 4, bw.begin() + 4 * b);
+            std::copy_n(rect4(*r).begin(), 4, bw.begin() + 4 * j);
         if (L == 0) {
-          if (auto r = flowRect(box, d.cfg.divergence.shrink, cols, rows))
-            std::copy_n(std::array<uint32_t, 4>{static_cast<uint32_t>(r->x), static_cast<uint32_t>(r->y), static_cast<uint32_t>(r->x + r->width),
-                                                static_cast<uint32_t>(r->y + r->height)}.begin(), 4, fw.begin() + 4 * b);
-          if (const auto& q = boxes[b].fit) {
+          if (auto r = flowRect(box, d.cfg.divergence.shrink, cols, rows)) std::copy_n(rect4(*r).begin(), 4, fw.begin() + 4 * j);
+          if (const auto& q = eb.fit) {
             const int64_t c[6] = {q->a0, q->a1, q->a2, q->b0, q->b1, q->b2};
-            std::copy_n(c, 6, qw.begin() + 6 * b);
-            fit_valid |= 1u << b;
+            std::copy_n(c, 6, qw.begin() + 6 * j);
+            fit_valid |= 1u << j;
           }
         }
       }
@@ -175,8 +175,9 @@ class XrtMomentEngine : public MomentEngine {
           .wait();
       d.sums.sync(XCL_BO_SYNC_BO_FROM_DEVICE);
       const int64_t* s = d.sums.map<const int64_t*>();
-      for (int b = 0; b < n; ++b) {
-        const int64_t* t = s + b * kTerms;
+      for (int j = 0; j < n; ++j) {
+        const int b = pass.boxes[j];
+        const int64_t* t = s + j * kTerms;
         if (boxes[b].level == L) {
           HornSums h;
           std::copy_n(t, 10, h.s.begin());

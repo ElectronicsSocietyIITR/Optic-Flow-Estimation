@@ -1,7 +1,9 @@
 #include "fcw/moment_engine.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 
 namespace fcw {
 
@@ -29,6 +31,21 @@ std::vector<BoxSums> SoftwareMomentEngine::run(const cv::Mat& prev, const cv::Ma
     out[i].flow = flowMomentsFixed(flow_q, e.box, pp, div_.shrink, mask);
   }
   return out;
+}
+
+std::vector<EnginePass> planEnginePasses(const std::vector<EngineBox>& boxes, int lanes) {
+  std::vector<EnginePass> passes;
+  if (boxes.empty()) return passes;
+  std::set<int> levels{0};
+  for (const auto& b : boxes) levels.insert(b.level);
+  for (const int L : levels) {
+    std::vector<int> carried;
+    for (int i = 0; i < static_cast<int>(boxes.size()); ++i)
+      if (L == 0 || boxes[i].level == L) carried.push_back(i);
+    for (size_t k = 0; k < carried.size(); k += static_cast<size_t>(lanes))
+      passes.push_back({L, std::vector<int>(carried.begin() + k, carried.begin() + std::min(carried.size(), k + lanes))});
+  }
+  return passes;
 }
 
 }  // namespace fcw

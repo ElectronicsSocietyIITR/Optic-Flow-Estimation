@@ -59,3 +59,10 @@ def test_make_flow_reads_the_line_buffer_setting():
 
     f = make_flow("vitis:median=0,lines=26")
     assert f.lines == 26 and f.kernel.name == "lk_ref_nomed_l26" and f.cache.name == "vitis_flow_cache_nomed_l26"
+
+
+def test_make_flow_reads_the_3x3_median_with_fewer_lines():
+    from collision_avoidance.fcw.pipeline import make_flow
+
+    f = make_flow("vitis:median=3,lines=34")
+    assert (f.median, f.lines, f.kernel.name, f.cache.name) == (3, 34, "lk_ref_med3_l34", "vitis_flow_cache_med3_l34")

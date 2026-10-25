@@ -29,3 +29,8 @@ build/lk_ref_nomed_l%: lk_ref.cpp ../../host/src/lk_flow.cpp ../common/fcw_pyr_d
 build/lk_ref_med3: lk_ref.cpp ../../host/src/lk_flow.cpp ../common/fcw_pyr_dense_optical_flow.hpp
 	mkdir -p build
 	g++ $(CXXFLAGS) -DLK_MEDIAN=3 lk_ref.cpp ../../host/src/lk_flow.cpp -o $@ $(LIBS)
+
+# 3x3 median with a smaller remap line buffer: build/lk_ref_med3_l34, ...
+build/lk_ref_med3_l%: lk_ref.cpp ../../host/src/lk_flow.cpp ../common/fcw_pyr_dense_optical_flow.hpp
+	mkdir -p build
+	g++ $(CXXFLAGS) -DLK_MEDIAN=3 -DLK_LINES=$* lk_ref.cpp ../../host/src/lk_flow.cpp -o $@ $(LIBS)

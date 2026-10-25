@@ -26,6 +26,16 @@ struct BoxSums {
   std::optional<FixedMoments> flow;  // from the level-0 pass, for every box
 };
 
+// One engine start at pyramid level `level`, carrying `boxes` (indices into the call's box list). A carried box
+// gets its Horn sums on this pass when its own level is `level`, and its flow moments when `level` is 0.
+struct EnginePass {
+  int level = 0;
+  std::vector<int> boxes;
+};
+// The starts an engine with `lanes` box slots needs: level 0 carries every box (flow moments), each other level
+// in use only its own boxes; `lanes` boxes per start, in box order.
+std::vector<EnginePass> planEnginePasses(const std::vector<EngineBox>& boxes, int lanes);
+
 class MomentEngine {
  public:
   virtual ~MomentEngine() = default;

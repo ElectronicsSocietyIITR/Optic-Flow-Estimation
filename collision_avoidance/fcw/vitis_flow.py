@@ -40,10 +40,10 @@ class VitisFlow:
                  lines: int = 50):
         """median: the per-pass median window on the flow: 5 (AMD's), 3 (lk_ref_med3), 0 = off (lk_ref_nomed); own caches.
         scale 2: run on pyramid level 1 (cv2.pyrDown, replicated borders) and upsample the flow back (bilinear, x2).
-        lines: the remap line buffer (NUM_LINES; AMD's example uses 50), median-off builds only."""
+        lines: the remap line buffer (NUM_LINES; AMD's example uses 50), with the 3x3 or no median."""
         median = 5 if median is True else 0 if median is False else median
-        if lines != 50 and median:
-            raise ValueError("lines other than 50 are built only without the median (lk_ref_nomed_l<lines>)")
+        if lines != 50 and median == 5:
+            raise ValueError("lines other than 50 are built only for the 3x3 or no median (lk_ref_med3_l<lines>, lk_ref_nomed_l<lines>)")
         suffix = {5: "", 3: "_med3", 0: "_nomed"}[median] + ("" if lines == 50 else f"_l{lines}")
         self.median, self.scale, self.lines = median, scale, lines
         self.cache = Path(cache_dir or ROOT / "outputs" / f"vitis_flow_cache{suffix}")

@@ -66,3 +66,32 @@ TEST(MomentEngine, HornRunsAtEachBoxsPyramidLevel) {
   ASSERT_TRUE(sums[0].flow && sums[1].flow);  // flow moments for every box (level-0 pass), whatever its Horn level
   EXPECT_EQ(*sums[1].flow, *sums[0].flow);
 }
+
+// A 4-lane engine takes at most 4 boxes per start: level 0 carries every box (flow moments, and Horn
+// for its own level-0 boxes), each other level only its own boxes.
+TEST(EnginePasses, BatchesBoxesIntoLaneSizedPassesPerLevel) {
+  std::vector<fcw::EngineBox> boxes(6);
+  const int levels[6] = {0, 0, 1, 2, 1, 0};
+  for (int i = 0; i < 6; ++i) boxes[i].level = levels[i];
+  const auto passes = fcw::planEnginePasses(boxes, 4);
+  ASSERT_EQ(passes.size(), 4u);
+  EXPECT_EQ(passes[0].level, 0);
+  EXPECT_EQ(passes[0].boxes, (std::vector<int>{0, 1, 2, 3}));
+  EXPECT_EQ(passes[1].level, 0);
+  EXPECT_EQ(passes[1].boxes, (std::vector<int>{4, 5}));
+  EXPECT_EQ(passes[2].level, 1);
+  EXPECT_EQ(passes[2].boxes, (std::vector<int>{2, 4}));
+  EXPECT_EQ(passes[3].level, 2);
+  EXPECT_EQ(passes[3].boxes, (std::vector<int>{3}));
+}
+
+TEST(EnginePasses, SixteenLanesNeedOnePassPerLevel) {
+  std::vector<fcw::EngineBox> boxes(16);
+  for (int i = 0; i < 16; ++i) boxes[i].level = i % 2;
+  const auto passes = fcw::planEnginePasses(boxes, 16);
+  ASSERT_EQ(passes.size(), 2u);
+  EXPECT_EQ(passes[0].boxes.size(), 16u);
+  EXPECT_EQ(passes[1].boxes.size(), 8u);
+}
+
+TEST(EnginePasses, NoBoxesNoPasses) { EXPECT_TRUE(fcw::planEnginePasses({}, 4).empty()); }

@@ -9,7 +9,7 @@
 constexpr int kMaxWidth = 512;
 constexpr int kMaxHeight = 512;
 #ifndef TTC_LANES
-#define TTC_LANES 16  // boxes per pass; fewer lanes = less logic, the host then runs more passes
+#define TTC_LANES 4  // boxes per start: 4 lanes route at 15.2k LUTs (16: ~35k); the host batches (planEnginePasses)
 #endif
 constexpr int kMaxBoxes = TTC_LANES;
 // 10 Horn sums (Ex^2, ExEy, ExG, Ey^2, EyG, G^2, ExEt, EyEt, GEt, Et^2) + Horn pixel count,
