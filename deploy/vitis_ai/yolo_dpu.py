@@ -5,7 +5,7 @@ Detect-head convolutions and returns the three raw per-stride maps; that is the
 part the DPU can execute. Box decoding (DFL softmax, anchors, sigmoid) and NMS
 run on the CPU via `decode` + `nms`.
 
-Input is the pipeline's resized frame (384x512, both multiples of the 32 px
+Input is the pipeline's resized frame (288x512 for 16:9 sources, both multiples of the 32 px
 stride), RGB in [0, 1] -- no letterboxing, so boxes are in frame pixels.
 """
 

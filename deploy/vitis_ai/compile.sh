@@ -5,7 +5,9 @@
 #   ./compile.sh yolov9t         # selected models
 set -euo pipefail
 
-ARCH=${ARCH:-/opt/vitis_ai/compiler/arch/DPUCZDX8G/KV260/arch.json}
+# Default: B3136, the DPU size that fits next to our kernels on the K26 (docs/superpowers/reports/2026-10-fabric-budget.md).
+# For the board, pass the arch.json the DPU build writes (ARCH=/path/to/arch.json): its fingerprint is the exact DPU.
+ARCH=${ARCH:-$(dirname "$0")/arch_b3136.json}
 IN_DIR=${IN_DIR:-quantized}
 OUT_DIR=${OUT_DIR:-compiled}
 

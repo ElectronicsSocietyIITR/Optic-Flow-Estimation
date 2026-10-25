@@ -6,7 +6,7 @@ Runs inside the Vitis AI PyTorch docker (see README.md). Typical sequence:
     python quantize.py --model pwcnet --mode calib   --videos clips/*.mp4
     python quantize.py --model pwcnet --mode test    --videos clips/*.mp4   # evaluates + exports .xmodel
 
-Both models use the pipeline resolution (384x512). Calibration and evaluation
+Both models use the pipeline resolution (288x512: the preprocess kernel's tensor for 16:9 sources). Calibration and evaluation
 frames are sampled evenly from the given videos (evaluation uses a disjoint
 set). PWC-Net consumes consecutive frame pairs, YOLOv9t single frames.
 """
@@ -26,7 +26,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from collision_avoidance import pwcnet  # noqa: E402
 
-HEIGHT, WIDTH = 384, 512
+HEIGHT, WIDTH = 288, 512  # fcw processingSize(16:9 source): the DPU input the preprocess kernel writes
 TARGET = "DPUCZDX8G_ISA1_B4096"  # KV260; confirm with `xdputil query` on the board
 
 
