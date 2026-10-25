@@ -7,11 +7,9 @@ set out [lindex $argv 0]
 if {$out eq ""} { set out [pwd]/kv260_fcw_hw }
 file mkdir $out
 
-# KV260 board files from AMD's board store.
-xhub::refresh_catalog [xhub::get_xstores xilinx_board_store]
-foreach item [xhub::get_xitems -quiet *kv260*] { if {![get_property IS_INSTALLED $item]} { xhub::install $item } }
-foreach item [xhub::get_xitems -quiet *k26*]   { if {![get_property IS_INSTALLED $item]} { xhub::install $item } }
-set_param board.repoPaths [get_property LOCAL_ROOT_DIR [xhub::get_xstores xilinx_board_store]]
+# KV260 board files: Vivado 2023.1 ships them (data/xhub/boards/XilinxBoardStore/boards/Xilinx/kv260_*); the
+# online board store no longer has a 2023.1 branch, so no catalog refresh.
+set_param board.repoPaths [file join $::env(XILINX_VIVADO) data xhub boards XilinxBoardStore boards]
 
 set som     [lindex [get_board_parts -latest_file_version *kv260_som*] 0]
 set carrier [lindex [get_board_components -quiet *kv260_carrier*som240_1_connector*] 0]

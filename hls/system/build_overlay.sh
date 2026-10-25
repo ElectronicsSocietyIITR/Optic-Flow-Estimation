@@ -21,6 +21,8 @@ mkdir -p "$OUT" && cd "$OUT"
 
 # 1. Hardware platform
 [[ -f hw/kv260_fcw.xsa ]] || vivado -mode batch -notrace -source "$REPO/hls/system/kv260_platform.tcl" -tclargs "$OUT/hw"
+need() { [[ -f $1 ]] || { echo "stage failed: $1 was not produced" >&2; exit 1; }; }  # Vivado / xsct exit 0 on script errors
+need hw/kv260_fcw.xsa
 
 # 2. Vitis platform (no boot components: Kria boots from its own image and loads the overlay with xmutil)
 XPFM=$OUT/pfm/kv260_fcw/export/kv260_fcw/kv260_fcw.xpfm
@@ -36,6 +38,7 @@ platform generate
 EOF
   xsct pfm/make_pfm.tcl
 fi
+need "$XPFM"
 
 # 3. DPU B3136 with UltraRAM (TRD README: B3136 U_BANK_IMG 4, WGT 15, BIAS 1), so BRAM stays free for our kernels
 if [[ ! -f dpu/dpu.xo ]]; then
@@ -48,6 +51,7 @@ if [[ ! -f dpu/dpu.xo ]]; then
      DIR_PRJ="$OUT/dpu" TRD_HOME="$OUT")
   cp dpu/binary_container_1/dpu.xo dpu/dpu.xo
 fi
+need dpu/dpu.xo
 
 # 4. Our HLS kernels (sources and options as in each kernel's hls_config.cfg)
 hlsxo() {  # <name> <top> <source> [extra flags...]
@@ -58,11 +62,13 @@ hlsxo() {  # <name> <top> <source> [extra flags...]
 hlsxo preprocess preprocess "$REPO/hls/preprocess/src/preprocess.cpp"
 hlsxo lk_wrapper lk_wrapper "$REPO/hls/lk_wrapper/src/lk_wrapper.cpp" -DLK_MAX=512 -DLK_LINES=34 -DLK_WIN=11 -DLK_MEDIAN=3
 hlsxo ttc_engine_top ttc_engine_top "$REPO/hls/ttc_engine/src/ttc_engine.cpp" -DTTC_LANES=4
+for x in preprocess lk_wrapper ttc_engine_top; do need $x.xo; done
 
 # 5. Link
 [[ -f fcw.xclbin ]] || v++ -l -t hw --platform "$XPFM" --config "$REPO/hls/system/link.cfg" \
   --vivado.impl.jobs "$JOBS" --vivado.synth.jobs "$JOBS" --save-temps --temp_dir _x_link \
   dpu/dpu.xo preprocess.xo lk_wrapper.xo ttc_engine_top.xo -o fcw.xclbin
+need fcw.xclbin
 cp _x_link/link/vivado/vpl/prj/prj.gen/sources_1/bd/*/ip/*_DPUCZDX8G_1_0/arch.json arch.json 2>/dev/null || true
 
 # 6. Kria app: bitstream as .bin, device-tree overlay with the zocl node, shell.json
