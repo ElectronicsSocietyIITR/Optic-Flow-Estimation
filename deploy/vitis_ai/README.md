@@ -2,8 +2,9 @@
 
 Toolchain: Vitis AI 3.5 PyTorch docker (`xilinx/vitis-ai-pytorch-cpu:ubuntu2004-3.5.0.306`,
 `pytorch_nndct 3.5.0+torch1.13.1` - the same build that produced the 2025 quantization
-files). Target `DPUCZDX8G_ISA1_B4096` (the image's KV260 `arch.json`). No KV260 board was
-available, so on-device latency is not measured.
+files). Target `DPUCZDX8G_ISA1_B3136`, the DPU size that fits next to our kernels
+([fabric report](../../docs/superpowers/reports/2026-10-fabric-budget.md)); the September results
+below were for B4096. No KV260 board was available, so on-device latency is not measured.
 
 ## Files
 
@@ -30,8 +31,15 @@ done
 deploy/vitis_ai/run_docker.sh ./compile.sh            # -> compiled/<model>/<model>_kv260.xmodel + subgraphs.txt
 ```
 
-For the DPU-ready detector pass `--yolo-weights ../../outputs/models/yolov9t_pruned.pt`
-(produced by `scripts/prune_yolo.py`, locally or with the Colab notebook).
+`compile.sh` targets `arch_b3136.json` by default. Once the overlay is built, compile against
+the DPU actually in it: `ARCH=/opt/fcw/build/arch.json deploy/vitis_ai/run_docker.sh ./compile.sh yolov9t`.
+`run_docker.sh` passes `ARCH`, `IN_DIR` and `OUT_DIR` into the container.
+
+For YOLOv9t, `quantize.py` sets the quantizer option `nndct_convert_silu_to_hswish`, so the
+original `yolov9t.pt` is quantised with Hardswish in place of SiLU; the test-mode score is
+against the untouched SiLU float model. For the pruned detector pass
+`--yolo-weights ../../outputs/models/yolov9t_pruned.pt` (produced by `scripts/prune_yolo.py`,
+locally or with the Colab notebook).
 
 ## What the inspector found
 
@@ -68,6 +76,24 @@ dash-cam clips at 384x512. All runs are in W&B (job types `quantize-calib` / `qu
 | YOLOv9t, original (SiLU) | raw head MAE 0.34 | **no**: compiler aborts, `Op_type 18 is invalid for xcompiler` | - |
 | YOLOv9t, pruned 30 % + Hardswish, fine-tuned | detection F1 vs float 0.76 (raw head MAE 0.45) | **yes**, `yolov9t_kv260.xmodel` 3.8 MB | **1 DPU (whole network)** + 3 CPU output transfers |
 | **YOLOv9t, Hardswish only (recommended)** | detection F1 vs float 0.84 (raw head MAE 0.41) | **yes**, 4.8 MB | **1 DPU (whole network)** + 3 CPU output transfers |
+
+The September F1 scores are against the float *Hardswish* model, so they measure INT8 alone.
+
+## Results for B3136 (Oct 2026)
+
+Calibration: 190 samples, evaluation: 50 disjoint samples from the ten `data/normal_driving` clips
+at 288x512, the pipeline's DPU input.
+
+| Model | Detection F1 vs float SiLU YOLOv9t | Compiled for B3136 | Subgraphs |
+|---|---|---|---|
+| YOLOv9t, original weights, SiLU kept | - | **no**: 358 layout transposes on the CPU, then `Op_type 18 is invalid for xcompiler` | - |
+| Hardswish, float (no quantisation) | 0.59 (40 frames) | - | - |
+| **Hardswish, INT8 (current `yolov9t_kv260.xmodel`)** | **0.64** | **yes**, 4.8 MB | **1 DPU (whole network)**, 0 CPU ops, 3 output transfers |
+
+The scenes have about two collision-relevant detections per frame, so these F1 values are
+noisy; what they show is that the SiLU → Hardswish swap, not INT8, costs most of the
+accuracy (on COCO: 0.378 → 0.317 mAP50-95). Planned next: distil the Hardswish model from the
+SiLU one on the dash-cam clips (the SiLU model's detections as labels) on a GPU.
 
 PWC-Net with Vitis AI fast-finetune (AdaQuant) was started but stopped after ~11 h at 47/81
 layers (projected ~15 h more on CPU), so only the plain post-training result above exists.

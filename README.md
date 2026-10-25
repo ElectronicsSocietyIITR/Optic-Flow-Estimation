@@ -578,7 +578,7 @@ Optic-Flow-Estimation/
 │   ├── lk_wrapper/             25 LK passes in one kernel start (Vitis Vision densePyrOpticalFlow)
 │   ├── lk_ref/                 AMD's LK in C-simulation, as a command-line flow tool
 │   ├── common/                 pyramid slot layout shared by the kernels and the host
-│   ├── system/link.cfg         v++ link: DPU + the three kernels (draft until the board build)
+│   ├── system/                 overlay build (Vitis 2023.1): platform Tcl, link.cfg, build_overlay.sh
 │   ├── image_derivative/       2025 Sobel kernel
 │   └── ports/                  2025 draft ports
 ├── eval/                       real-data evaluation
@@ -677,17 +677,27 @@ make -C hls/lk_wrapper csim
 
 ### On the KV260
 
-Build with `cmake -DFCW_BOARD=ON` on the board image (XRT, VART), link the overlay with `hls/system/link.cfg`, then:
+**1. Overlay.** `hls/system/build_overlay.sh` builds the whole overlay on Linux (here WSL2 Ubuntu 22.04) with Vitis/Vivado **2023.1**, the release the Kria platforms, the Vitis AI 3.5 DPU and the Kria Ubuntu XRT line up on. It needs the DPU TRD from Vitis AI 3.5 (`DPUCZDX8G_VAI_v3.0`):
 
 ```bash
-./fcw_app --board --xclbin fcw.xclbin --xmodel yolov9t.xmodel --source /dev/video0 --fx 200
+XILINX=/tools/Xilinx TRD=/opt/fcw/DPUCZDX8G_VAI_v3.0 OUT=/opt/fcw/build JOBS=4 bash hls/system/build_overlay.sh
 ```
 
-None of this has run on a board yet; the bring-up steps, one per backend, are in [plan 2, Task 10](docs/superpowers/plans/2026-10-07-fcw-host-app.md).
+Stages, each skipped once its output exists: hardware platform (`kv260_platform.tcl` → `.xsa`) → Vitis platform (`.xpfm`) → DPU B3136 with UltraRAM (`dpu.xo`) → the three HLS kernels (`v++ -c`) → link with `link.cfg` (`fcw.xclbin`) → Kria app `app/fcw/{fcw.bit.bin, fcw.dtbo, fcw.xclbin, shell.json}` plus the DPU's `arch.json`. Vivado needs most of 16 GB; give WSL 14 GB plus swap and run nothing else alongside it.
+
+**2. Detector.** Recompile YOLOv9t against the built DPU: `ARCH=/opt/fcw/build/arch.json deploy/vitis_ai/run_docker.sh ./compile.sh yolov9t` (see [DPU model](#dpu-model)).
+
+**3. Board.** Copy `app/fcw` to `/lib/firmware/xilinx/fcw` and run `sudo xmutil loadapp fcw`. Build the host with `cmake -DFCW_BOARD=ON` on the board image (XRT, VART), then:
+
+```bash
+./fcw_app --board --xclbin fcw.xclbin --xmodel yolov9t_kv260.xmodel --source /dev/video0 --fx 200
+```
+
+None of this has run on a board yet. The overlay build has not completed: its first run was killed for lack of memory while the YOLO quantisation ran at the same time. The bring-up steps, one per backend, are in [plan 2, Task 10](docs/superpowers/plans/2026-10-07-fcw-host-app.md).
 
 ### DPU model
 
-`deploy/vitis_ai/README.md` has the Docker workflow that quantises YOLOv9t-Hardswish to INT8 and compiles it for the DPU (`DPUCZDX8G_ISA1_B4096`; recompile for B3136 if the fabric budget calls for it).
+`deploy/vitis_ai/README.md` has the Docker workflow that quantises YOLOv9t to INT8 and compiles it for the B3136 DPU (`compile.sh` defaults to `arch_b3136.json`). The DPU has no SiLU, so `quantize.py` has the quantizer swap every SiLU for Hardswish; the compiled model is then one DPU subgraph. The swap costs accuracy that fine-tuning has not yet recovered (see that README).
 
 ---
 
@@ -697,10 +707,11 @@ None of this has run on a board yet; the bring-up steps, one per backend, are in
 |---|---|---|
 | [Plan 1](docs/superpowers/plans/2026-10-06-fcw-algorithm-core.md) | algorithm core in Python, PC evaluation | ✅ done; all PC exit criteria pass |
 | [Plan 2](docs/superpowers/plans/2026-10-07-fcw-host-app.md) | C++ host port with golden parity, threaded runtime | ✅ Tasks 1–9 done · ⏳ **Task 10: KV260 bring-up**: backends written (capture tested on a PC; XRT, VART and DRM compile-checked only); the board test, on-board latency and power are still to do |
-| [Plan 3](docs/superpowers/plans/2026-10-09-horn-ttc-engine.md) | Horn TTC engine in HLS | ✅ Tasks 1–3 (bit-exact C-sim, fixed-point flow moments) · ⏳ Task 4 synthesis (needs device data) · ⏳ Task 5 on-board integration |
-| [Pipelined, parallel FCW](docs/superpowers/plans/2026-10-23-pipelined-parallel-fcw.md) | 16 issues from a low-level review: linear ego-rotation, predicted-fit divergence mask, Option A engine, five-stage runtime with a parallel object stage, preprocess and LK kernels, board backends | ✅ Tasks 1–16 · ⏳ Task 17 synthesis (needs device data; [budget estimate](docs/superpowers/reports/2026-10-fabric-budget.md) done) |
+| [Plan 3](docs/superpowers/plans/2026-10-09-horn-ttc-engine.md) | Horn TTC engine in HLS | ✅ Tasks 1–3 (bit-exact C-sim, fixed-point flow moments) · ✅ Task 4 synthesis: 4 lanes routed out of context at 301 MHz · ⏳ Task 5 on-board integration |
+| [Pipelined, parallel FCW](docs/superpowers/plans/2026-10-23-pipelined-parallel-fcw.md) | 16 issues from a low-level review: linear ego-rotation, predicted-fit divergence mask, Option A engine, five-stage runtime with a parallel object stage, preprocess and LK kernels, board backends | ✅ Tasks 1–16 · ✅ Task 17: every kernel routed out of context, ≈ 98k of 117k LUTs with the DPU ([fabric report](docs/superpowers/reports/2026-10-fabric-budget.md)) |
+| Overlay and DPU model | linked `xclbin` + Kria app (Vitis 2023.1), YOLOv9t for B3136 | ✅ build scripts · ✅ YOLOv9t compiles for B3136 as one DPU subgraph (SiLU → Hardswish) · ⏳ overlay build (rerun on its own) · ⏳ detector fine-tune to recover the Hardswish accuracy |
 
-Next: the KV260 bring-up (plan 2, Task 10, one test per backend), which measures FPS, capture-to-warning latency and power on the board; then synthesis and the fabric fit.
+Next: finish the overlay build, then the KV260 bring-up (plan 2, Task 10, one test per backend), which measures FPS, capture-to-warning latency and power on the board.
 
 Design specifications: [the system](docs/superpowers/specs/2026-10-06-kv260-collision-warning-design.md) · [the pipelined, parallel design](docs/superpowers/specs/2026-10-23-pipelined-parallel-fcw-design.md).
 

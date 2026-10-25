@@ -14,6 +14,7 @@ set). PWC-Net consumes consecutive frame pairs, YOLOv9t single frames.
 from __future__ import annotations
 
 import argparse
+import copy
 import os
 import sys
 from pathlib import Path
@@ -27,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from collision_avoidance import pwcnet  # noqa: E402
 
 HEIGHT, WIDTH = 288, 512  # fcw processingSize(16:9 source): the DPU input the preprocess kernel writes
-TARGET = "DPUCZDX8G_ISA1_B4096"  # KV260; confirm with `xdputil query` on the board
+TARGET = "DPUCZDX8G_ISA1_B3136"  # the overlay's DPU (arch_b3136.json); confirm with `xdputil query` on the board
 
 
 def sample_frames(videos: list[str], count: int, offset: int, pairs: bool) -> list[tuple[np.ndarray, ...]]:
@@ -128,6 +129,13 @@ def main():
     from pytorch_nndct.apis import Inspector, torch_quantizer
 
     spec = ModelSpec(args.model, args.yolo_weights)
+    # The DPUCZDX8G has no SiLU (PG338: ReLU, ReLU6, LeakyReLU, hard sigmoid, hard swish); unconverted, every
+    # Conv+SiLU becomes a CPU op and vai_c_xir aborts. The quantizer swaps the model's nn.SiLU modules for
+    # Hardswish in place, so keep an untouched copy as the float reference.
+    reference = copy.deepcopy(spec.model)
+    if args.model == "yolov9t":
+        from nndct_shared.utils import option_util
+        option_util.set_option_value("nndct_convert_silu_to_hswish", True)
     out_dir = Path(args.output_dir) / args.model
     out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device("cpu")
@@ -167,7 +175,7 @@ def main():
         with torch.no_grad():
             for sample in samples:
                 x = spec.to_input(sample)
-                metrics.append(spec.error(qmodel(x), spec.model(x)))
+                metrics.append(spec.error(qmodel(x), reference(x)))
         summary = {k: float(np.mean([m[k] for m in metrics])) for k in metrics[0]}
         print("quantized vs float:", summary)
         quantizer.export_xmodel(output_dir=str(out_dir), deploy_check=False)
