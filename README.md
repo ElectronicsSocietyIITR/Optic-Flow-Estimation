@@ -43,9 +43,9 @@
 | False alarms in normal driving (30 min dash cam) | < 1 per 10 min | **0.67 per 10 min** (2 in 30 min) with the lead-vehicle and oncoming rules. The version with predicted path entry was re-checked on 3 of the 10 clips: 1 warning, the same one the earlier version raised. Not re-run after the pipelined redesign | ✅ / partial |
 | Crossing pedestrian / car cutting in (synthetic road) | warn by TTC 1.5 s | **warns at ≈ 2.3 s** (was 0.80 s / 0.86 s) | ✅ |
 | Perception cost, C++ on a laptop CPU | — | **4.5 ms per frame** through the pipelined perception (was 11.2) | |
-| Same work on KV260 Cortex-A53 cores (×15.9, PassMark) | 33 ms per stage for 30 FPS | T3a ≈ 19–24 ms ∥ T3b ≈ 22–44 ms → **≈ 23–30 FPS** (was one serial 120–180 ms stage, 6–8 FPS) | ⏳ board run pending |
-| **Whole system: FPGA design vs CPU-only (A53)** | — | **≈ 33–44 ms vs 28.4 s per frame: ≈ 650–860× faster, ≈ 320–650× less energy per frame** (projected, see [FPGA design vs CPU-only vs GPU](#fpga-design-vs-cpu-only-vs-gpu)) | |
-| **Whole system: FPGA design vs native GPU (RTX 4060 Laptop, measured)** | — | **≈ 33–44 ms vs 245 ms per frame (≈ 5.6–7.4×), 10–15 W vs 47.7 W, ≈ 18–35× less energy per frame** | |
+| Same work on KV260 Cortex-A53 cores (×15.9, PassMark) | 33 ms per stage for 30 FPS | T3a ≈ 19–24 ms ∥ T3b ≈ 22–44 ms → **≈ 21–30 FPS** (was one serial 120–180 ms stage, 6–8 FPS) | ⏳ board run pending |
+| **Whole system: FPGA design vs CPU-only (A53)** | — | **≈ 33–48 ms vs 28.4 s per frame: ≈ 590–860× faster, ≈ 300–650× less energy per frame** (projected, see [FPGA design vs CPU-only vs GPU](#fpga-design-vs-cpu-only-vs-gpu)) | |
+| **Whole system: FPGA design vs native GPU (RTX 4060 Laptop, measured)** | — | **≈ 33–48 ms vs 245 ms per frame (≈ 5.1–7.4×), 10–15 W vs 47.7 W, ≈ 16–35× less energy per frame** | |
 | HLS kernels in C-simulation | bit-exact | **Horn engine 9 / 9 cases · LK wrapper 0 of 147,456 words differ · preprocess gray, tensor, pyramid exact** | ✅ |
 | Python ↔ C++ parity, parallel = serial | identical decisions | **59 / 59 GoogleTest tests** | ✅ |
 
@@ -65,42 +65,42 @@ The FPGA design is a five-stage pipeline, so its time per frame is the time **be
 
 | | CPU-only, KV260 A53 core (scaled) | CPU-only, laptop core (measured) | Native GPU, RTX 4060 Laptop (measured) | **FPGA design, KV260** (projected) |
 |---|---|---|---|---|
-| Time per frame | ≈ 28.4 s | 1.78 s | 245 ms | **≈ 33–44 ms** |
-| Frames per second | 0.035 | 0.56 | 4.1 | **≈ 23–30** |
+| Time per frame | ≈ 28.4 s | 1.78 s | 245 ms | **≈ 33–48 ms** |
+| Frames per second | 0.035 | 0.56 | 4.1 | **≈ 21–30** |
 | Power | ≈ 7.5 W (board) | not measured | 47.7 W (GPU board only; 15 W idle) | **10–15 W (whole board)** |
-| Energy per frame | ≈ 213 J | not measured | 11.7 J (GPU only) | **≈ 0.33–0.66 J** |
+| Energy per frame | ≈ 213 J | not measured | 11.7 J (GPU only) | **≈ 0.33–0.72 J** |
 
 ### Relative to the FPGA design
 
 | FPGA design compared with … | Speed-up | Energy saving per frame | Power |
 |---|---|---|---|
-| CPU-only on the same KV260 (A53) | **≈ 650–860×** | **≈ 320–650×** | the FPGA design draws 1.3–2× more, but finishes 650–860× sooner |
-| CPU-only on a laptop core | ≈ 41–54× | not measured | — |
-| Native GPU, RTX 4060 Laptop | **≈ 5.6–7.4×**. If the GPU version were pipelined too, its 154 ms LK would bound it: ≈ 3.5–4.7× | **≈ 18–35×** (vs the GPU alone) | **3.2–4.8× less** (whole KV260 board vs the GPU board alone) |
+| CPU-only on the same KV260 (A53) | **≈ 590–860×** | **≈ 300–650×** | the FPGA design draws 1.3–2× more, but finishes 590–860× sooner |
+| CPU-only on a laptop core | ≈ 37–54× | not measured | — |
+| Native GPU, RTX 4060 Laptop | **≈ 5.1–7.4×**. If the GPU version were pipelined too, its 154 ms LK would bound it: ≈ 3.2–4.7× | **≈ 16–35×** (vs the GPU alone) | **3.2–4.8× less** (whole KV260 board vs the GPU board alone) |
 
 ### Per stage, ms per frame
 
 | Stage | CPU-only, A53 (scaled) | CPU-only, laptop core (measured) | Native GPU (measured) | FPGA design (projected) | FPGA vs A53 | FPGA vs laptop CPU | FPGA vs GPU |
 |---|---|---|---|---|---|---|---|
-| Preprocess (4K → processing size, gray, tensor) | 741 | 46.6 | 9.2 | ≈ 7 (≤ 1080p in) | ≈ 106× | ≈ 6.7× | ≈ 1.3× |
-| Dense pyramidal LK flow | 25,614 | 1,611 (plain) · 1,505 (OpenCV) | 154 | ≈ 8 | **≈ 3,200×** | ≈ 200× | **≈ 19×** |
-| YOLOv9t detection | 1,935 | 121 | 82 | ≈ 10–30 | ≈ 65–194× | ≈ 4–12× | ≈ 2.7–8.2× |
-| Horn sums + flow moments | 7.0 | 0.44 | 0.44 (CPU) | ≈ 0.5–0.7 (PL engine, per level pass) | ≈ 10× | ≈ 0.7× | ≈ 0.7× |
+| Preprocess (4K → processing size, gray, tensor) | 741 | 46.6 | 9.2 | ≈ 8.6 (≤ 1080p in, synthesized) | ≈ 86× | ≈ 5.4× | ≈ 1.1× |
+| Dense pyramidal LK flow | 25,614 | 1,611 (plain) · 1,505 (OpenCV) | 154 | ≈ 5.8 (synthesized) | **≈ 4,400×** | ≈ 280× | **≈ 27×** |
+| YOLOv9t detection | 1,935 | 121 | 82 | ≈ 13–39 (DPU B3136) | ≈ 50–150× | ≈ 3.1–9.3× | ≈ 2.1–6.3× |
+| Horn sums + flow moments | 7.0 | 0.44 | 0.44 (CPU) | ≈ 1.2–5 (4-lane PL engine, 1–4 passes) | ≈ 1.4–6× | ≈ 0.1–0.4× | ≈ 0.1–0.4× |
 | Perception on the Arm cores | 85 (one core, serial) | 5.4 | 5.4 (laptop CPU) | T3a ≈ 24 ∥ T3b ≈ 22–44 | | | |
-| **Frame** | **28,370** | **1,784** | **245** | **≈ 33–44** (slowest stage) | **≈ 650–860×** | **≈ 41–54×** | **≈ 5.6–7.4×** |
+| **Frame** | **28,370** | **1,784** | **245** | **≈ 33–48** (slowest stage) | **≈ 590–860×** | **≈ 37–54×** | **≈ 5.1–7.4×** |
 
 The GPU and accelerator rows (preprocess, LK, YOLO) are from the earlier measurement at 512×384. The CPU-only rows were re-measured on the final code at 512×288 (`fcw_cpu_baseline`, 30 frames).
 
 **What the numbers say**
 
-- **Dense optical flow is the reason for the FPGA.** It is 90 % of the CPU-only frame and 63 % of the GPU frame. In the fabric it streams at one pixel per clock: ≈ 3,200× faster than an A53 core and ≈ 19× faster than the GPU version.
+- **Dense optical flow is the reason for the FPGA.** It is 90 % of the CPU-only frame and 63 % of the GPU frame. In the fabric it takes ≈ 5.8 ms per frame (synthesized, 250 MHz): ≈ 4,400× faster than an A53 core and ≈ 27× faster than the GPU version, at ≈ 0.7 W.
 - **The DPU makes the detector real-time** on a 10–15 W board: 65–194× faster than an A53 core.
 - **Pipelining removed the Arm bottleneck.** Perception used to be one serial stage of 120–180 ms on one A53 core.
   - It is now two stages on their own cores, with the object stage spread over 3 workers.
   - The Arm work itself is ≈ 30 % smaller: 5.4 against 7.5 ms on the laptop.
   - The largest remaining unknown is divergence on LK flow: 1.86 ms per frame on the laptop, against 0.40 ms on DIS flow. That makes T3b a range of 22–44 ms, to be profiled on the board.
 - **Small stages gain little from hardware.** The engine is about as fast as software for a few boxes on the laptop. On the A53 it saves ≈ 7–12 ms of T3b, and it keeps that cost flat as objects or resolution grow.
-- **Energy:** the FPGA design draws more power than the A53 alone and less than a third of the GPU's. Per frame it needs **≈ 320–650× less energy than CPU-only** and **≈ 18–35× less than the GPU**.
+- **Energy:** the FPGA design draws more power than the A53 alone and less than a third of the GPU's. Per frame it needs **≈ 300–650× less energy than CPU-only** and **≈ 16–35× less than the GPU**.
 - **Caveat:** a vendor-tuned GPU stack (TensorRT, a hand-written CUDA LK kernel) would beat the KV260 on raw speed, at 50–100+ W for the GPU and its host against 10–15 W for the whole KV260 board.
 
 ---
@@ -138,7 +138,7 @@ Everything in this system builds on that: four independent ways to measure image
 | Where | Component | Why there | Built with |
 |---|---|---|---|
 | PL · `preprocess` | Source frame (≤ 1080p, BGRx) → bilinear resize to the processing size (512 wide, the source's aspect: 512×288 for 16:9) → INT8 tensor for the DPU, integer gray, 5-level pyramid into one DDR slot | per-pixel, streaming | HLS + Vitis Vision `resize`, `pyrDown` |
-| PL · DPU B3136 or B4096 | YOLOv9t with Hardswish activations, INT8, compiled as **one** DPU subgraph | a CNN; SiLU had to be replaced for the whole network to map onto the DPU | AMD DPU IP; size set by the [fabric budget](docs/superpowers/reports/2026-10-fabric-budget.md) |
+| PL · DPU B3136 | YOLOv9t with Hardswish activations, INT8, compiled as **one** DPU subgraph | a CNN; SiLU had to be replaced for the whole network to map onto the DPU | AMD DPU IP; size set by the [fabric budget](docs/superpowers/reports/2026-10-fabric-budget.md) |
 | PL · `lk_wrapper` | Dense pyramidal Lucas–Kanade flow between two pyramid slots: 5 levels × 5 iterations, 11×11 window, all in one kernel start | per-pixel, iterative; the main reason flow is real-time at all | HLS + Vitis Vision `densePyrOpticalFlow` |
 | PL · `ttc_engine_top` | **Horn TTC engine**: 23 integer sums per box for up to 16 boxes, one pass per pyramid level in use | per-pixel products and accumulations; bit-exact with the software model | our own HLS |
 | PS · T1 | Capture: GStreamer (VCU decode or V4L2 camera), buffer timestamps, drop oldest when live | I/O | |
@@ -331,16 +331,22 @@ The kernel is **bit-exact** with the Python and C++ models in C-simulation on 7 
 | Kernel | What it does | C-simulation result |
 |---|---|---|
 | `hls/preprocess` | resize, gray, INT8 quantiser, 4 × `pyrDown` into one pyramid slot | Gray, tensor and pyramid match the software definition exactly. Vitis's bilinear resize differs from `cv::resize` by at most 2 gray levels (mean 0.37) on a 1080p test frame. The software now uses the kernel's integer gray formula and its border rule, so from the same gray image both sides build the same pyramid. |
-| `hls/lk_wrapper` | all 25 LK passes (5 levels × 5 iterations, 5×5 median per pass) in one kernel start | output equals the host-driven reference loop: 0 of 147,456 flow words differ |
+| `hls/lk_wrapper` | all 25 LK passes (5 levels × 5 iterations, 3×3 median per pass, 34 remap lines; a fork of AMD's top-level LK file, bit-identical to it with the 5×5 median) in one kernel start | output equals the host-driven reference loop: 0 of 147,456 flow words differ |
 
-**Fabric fit.** The [fabric budget](docs/superpowers/reports/2026-10-fabric-budget.md) puts B4096, LK and a 16-lane engine at about 140k of the K26's 117k LUTs. Its fallbacks, in order:
+**Fabric fit: routed.** Synthesized with Vitis HLS 2026.1 and placed and routed in Vivado 2026.1 on the K26's `xck26` ([fabric budget](docs/superpowers/reports/2026-10-fabric-budget.md)):
 
-1. accumulators sized per term (still bit-exact);
-2. fewer engine lanes with more passes;
-3. the B3136 DPU, which is what AMD's own KV260 apps use;
-4. Horn in software on the A53, which Option A allows with no code change.
+| Kernel | LUT | BRAM | DSP | Clock | Power (dynamic) |
+|---|---|---|---|---|---|
+| preprocess | 9.6k | 16 | 45 | 261 MHz | 0.22 W |
+| LK (3×3 median, 34 lines) | 26.4k | 88 | 93 | 279 MHz | 0.72 W |
+| Horn engine (4 lanes) | 15.2k | 21 | 85 | 301 MHz | 0.51 W |
+| + DPU B3136 (PG338) | 47.3k | 2 + 64 URAM | 436 | 300 MHz | |
+| **Total** | **≈ 98k of 117k (84 %)** | **127 of 144 (88 %)** | 659 (53 %) | kernels at 250 MHz | **1.45 W** (our kernels) |
 
-Synthesis is waiting on the Zynq UltraScale+ device data for Vitis 2024.2.
+Getting there took real synthesis numbers, not estimates. Our three kernels started at 213k LUTs (csynth); the changes:
+- **preprocess:** one `pyrDown` reused per level;
+- **LK:** the per-pass 5×5 median filters were half the LK core. A 3×3 median keeps most of the accuracy; removing the median doubles divergence error on the kernel's fixed-point flow.
+- **engine:** accumulators sized per term, and 4 lanes with the host batching boxes.
 
 ---
 
@@ -458,7 +464,7 @@ The T3b range comes from the flow:
 - **22 ms** is with DIS flow, as above.
 - **44 ms** is from `fcw_cpu_baseline`, which runs the same code on LK flow like the board's. There, divergence costs 1.86 ms per frame against 0.40 ms.
 
-The slowest stage sets the frame rate, so this projects to **≈ 23–30 FPS**. Before this iteration the same work was one serial stage of about 120–180 ms (6–8 FPS).
+The slowest stage sets the frame rate, so this projects to **≈ 21–30 FPS**. Before this iteration the same work was one serial stage of about 120–180 ms (6–8 FPS).
 
 The board run (plan 2, Task 10) will measure it. Two unknowns matter most: why divergence costs more on LK flow, and contention, since four cores are shared by T1–T4 and the 3 workers.
 
@@ -477,21 +483,21 @@ Both LK implementations reach 0.035 px median error on a known sub-pixel shift, 
 |---|---|---|---|---|---|
 | Stage, ms per frame | CPU-only, laptop core (**measured**) | CPU-only, one A53 core (×15.9) | Native GPU, RTX 4060 Laptop (**measured**) | FPGA design on the KV260 | Source of the FPGA figure |
 |---|---|---|---|---|---|
-| Preprocess: 4K → processing size, gray, tensor | 46.6 | ≈ 741 | 9.2 (incl. 4K upload) | ≈ 7 (≤ 1080p in) | 1 px/clock at 300 MHz over a 1080p frame (our `preprocess` kernel) |
-| Dense pyramidal LK flow | 1,611 (plain C++) · 1,505 (OpenCV, SIMD) | ≈ 25,600 | 154 | ≈ 8 | AMD's benchmark: 12 FPS at 1080p on the FPGA vs 0.63 FPS on a CPU, scaled to 10.5× fewer pixels |
-| YOLOv9t detection | 121 (PyTorch, 1 thread; 8 no faster) | ≈ 1,935 | 82 (PyTorch eager) | ≈ 10–30 (DPU B4096; ×1.31 on B3136) | estimate from compute; a published YOLOX-nano run took 15.4 ms on the B4096 DPU |
-| Horn sums + flow moments, every box | 0.44 | ≈ 7.0 | 0.44 (on the CPU) | ≈ 0.5–0.7 per level pass | II = 1 at the 300 MHz target, 512×288 |
+| Preprocess: 4K → processing size, gray, tensor | 46.6 | ≈ 741 | 9.2 (incl. 4K upload) | ≈ 8.6 (≤ 1080p in) | synthesized cycle count at 250 MHz (our `preprocess` kernel) |
+| Dense pyramidal LK flow | 1,611 (plain C++) · 1,505 (OpenCV, SIMD) | ≈ 25,600 | 154 | ≈ 5.8 | synthesized: ≈ 1.25 clocks per pixel per pass, 25 passes over the 512×288 pyramid, 250 MHz |
+| YOLOv9t detection | 121 (PyTorch, 1 thread; 8 no faster) | ≈ 1,935 | 82 (PyTorch eager) | ≈ 13–39 (DPU B3136) | estimate from compute; a published YOLOX-nano run took 15.4 ms on the B4096 DPU |
+| Horn sums + flow moments, every box | 0.44 | ≈ 7.0 | 0.44 (on the CPU) | ≈ 1.2–5 (1–4 passes) | synthesized: 4 lanes, II = 2, 250 MHz, 512×288 |
 | Perception on the Arm cores | 5.4 | ≈ 85 (one core, serial) | 5.4 (laptop CPU) | T3a ≈ 19–24 ∥ T3b ≈ 22–44 (A53) | same code, pipelined |
-| **Frame time** | **1,784 (0.56 FPS)** | **≈ 28,400 (0.035 FPS)** | **245 (4.1 FPS)** | **≈ 33–44 (23–30 FPS)** between frames | five-stage pipeline: the slowest stage |
+| **Frame time** | **1,784 (0.56 FPS)** | **≈ 28,400 (0.035 FPS)** | **245 (4.1 FPS)** | **≈ 33–48 (21–30 FPS)** between frames | five-stage pipeline: the slowest stage |
 
 **Speed-up of the FPGA design**
 
 | Stage | vs CPU-only (A53) | vs native GPU |
 |---|---|---|
-| Dense LK flow | ≈ 3,200× | ≈ 19× |
-| YOLOv9t | ≈ 65–190× | ≈ 3–8× |
-| Preprocess | ≈ 106× | ≈ 1.3× |
-| Whole frame | **≈ 650–860×** | **≈ 5.6–7.4×** (≈ 3.5–4.7× against a pipelined GPU version) |
+| Dense LK flow | ≈ 4,400× | ≈ 27× |
+| YOLOv9t | ≈ 50–150× | ≈ 2.1–6.3× |
+| Preprocess | ≈ 86× | ≈ 1.1× |
+| Whole frame | **≈ 590–860×** | **≈ 5.1–7.4×** (≈ 3.2–4.7× against a pipelined GPU version) |
 
 Before this iteration the projection was 120–180 ms per frame, with all per-object work on one A53 core: 158–238× faster than CPU-only and 1.4–2× faster than the GPU. Pipelining T3 and parallelising the object stage is what moves it to the table above.
 
@@ -503,11 +509,11 @@ Dense flow is 90 % of the CPU-only time and 63 % of the GPU time, and it is exac
 |---|---|---|---|
 | CPU-only, one A53 core | ≈ 28.4 s | ≈ 7.5 W (board, Arm only) | ≈ 213 J |
 | Native GPU, RTX 4060 Laptop (**measured**) | 245 ms | 47.7 W (GPU board alone) | **11.7 J** (GPU alone) |
-| FPGA design, five-stage pipeline (projected) | ≈ 33–44 ms between frames | ≈ 10–15 W (whole board) | ≈ 0.33–0.66 J: **≈ 18–35× less than the GPU**, ≈ 320–650× less than CPU-only |
+| FPGA design, five-stage pipeline (projected) | ≈ 33–48 ms between frames | ≈ 10–15 W (whole board) | ≈ 0.33–0.72 J: **≈ 16–35× less than the GPU**, ≈ 300–650× less than CPU-only |
 
 **Reading this honestly.**
 
-- Against plain implementations on each platform, the FPGA design projects to about 5.6–7.4× faster than the GPU per frame, or 3.5–4.7× if the GPU version were pipelined as well. It does so at a third to a fifth of the GPU's power and 18–35× less energy per frame. These are projections until the board run.
+- Against plain implementations on each platform, the FPGA design projects to about 5.1–7.4× faster than the GPU per frame, or 3.2–4.7× if the GPU version were pipelined as well. It does so at a third to a fifth of the GPU's power and 16–35× less energy per frame. These are projections until the board run.
 - A *vendor-tuned* GPU stack (TensorRT for the detector, a hand-written CUDA LK kernel) would be much faster than these GPU numbers and would beat the KV260 on raw speed, but at 50–100+ W for a laptop GPU plus its host, against 10–15 W for the whole KV260 board. For a camera module in a car, the power envelope and the fixed, predictable latency of a streaming pipeline are what count.
 
 Sources: [AMD Vitis Vision benchmark](https://xilinx.github.io/Vitis_Libraries/vision/2022.1/Benchmark.html) · [PassMark: Cortex-A53 1.33 GHz](https://www.cpubenchmark.net/compare/5443vs5206/ARM-Cortex-A53-4-1333-MHz-vs-Intel-N95) · [PassMark: Ryzen 7 7435HS](https://www.cpubenchmark.net/compare/6067vs5855/AMD-Ryzen-7-7435HS-vs-AMD-Ryzen-7-Pro-7735U) · [KV260 power](https://www.hackster.io/whitney-knitter/benchmarking-the-kria-kv260-ai-vision-starter-kit-464972) · [YOLOX-nano on the B4096 DPU](https://hackster.io/iotengineer22/benchmark-architectures-of-the-dpu-with-kr260-699f19)
@@ -517,7 +523,7 @@ Full details, including what was tried and did not work: [docs/superpowers/repor
 ### Known limitations
 
 - **Not yet run on the board.** All numbers are from a PC; the KV260 bring-up is the next milestone.
-- **Fabric fit unconfirmed.** The design as written is estimated at ≈ 140k of the K26's 117k LUTs. The [fabric budget](docs/superpowers/reports/2026-10-fabric-budget.md) gives the fallbacks; synthesis decides.
+- **Fabric fit is per kernel.** Each kernel is routed out of context (≈ 98k of 117k LUTs with the DPU); the linked overlay with the platform interconnect is built at bring-up, and BRAM (88 %) is the tightest resource.
 - **4K sources on the board** are scaled to 1080p in software capture before the preprocess kernel. Real-time runs need a camera or file at 1080p or below.
 - **Flat-road assumption** in κ: hills and dips bias the road constant. An unmeasurable κ never suppresses an in-path warning, so the failure mode is a false alarm, not a missed one.
 - **Night, rain and glare** are untested.

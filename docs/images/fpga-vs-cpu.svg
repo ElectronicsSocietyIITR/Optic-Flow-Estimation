@@ -4,7 +4,7 @@
 <text x="20" y="52" font-size="12.5" fill="#4b5563">log scale · CPU-only: plain C++ on one laptop core, scaled to a Cortex-A53 (PassMark ×15.9) · GPU: measured on an RTX 4060 Laptop</text>
 <rect x="20" y="64" width="14" height="14" rx="3" fill="#9ca3af"/><text x="40" y="76" font-size="12" fill="#111827">CPU-only, one KV260 A53 core (projected)</text>
 <rect x="310" y="64" width="14" height="14" rx="3" fill="#2563eb"/><text x="330" y="76" font-size="12" fill="#111827">native GPU, RTX 4060 Laptop (measured)</text>
-<rect x="600" y="64" width="14" height="14" rx="3" fill="#059669"/><text x="620" y="76" font-size="12" fill="#111827">FPGA design on the KV260 (published / estimated)</text>
+<rect x="600" y="64" width="14" height="14" rx="3" fill="#059669"/><text x="620" y="76" font-size="12" fill="#111827">FPGA design on the KV260 (synthesized / estimated)</text>
 <path d="M220.0,92 V560" stroke="#e5e7eb"/>
 <text x="220.0" y="576" text-anchor="middle" font-size="11" fill="#6b7280">0.1</text>
 <path d="M292.0,92 V560" stroke="#e5e7eb"/>
@@ -26,29 +26,29 @@
 <text x="504.6" y="118.5" font-size="11" font-weight="700" fill="#1f2937">741 ms</text>
 <rect x="220.0" y="127" width="141.3" height="16" rx="3" fill="#2563eb"/>
 <text x="367.3" y="139.5" font-size="11" font-weight="700" fill="#1f2937">9.2 ms</text>
-<rect x="220.0" y="148" width="132.8" height="16" rx="3" fill="#059669"/>
-<text x="358.8" y="160.5" font-size="11" font-weight="700" fill="#1f2937">≈ 7 (PL, ≤ 1080p in)</text>
+<rect x="220.0" y="148" width="139.3" height="16" rx="3" fill="#059669"/>
+<text x="365.3" y="160.5" font-size="11" font-weight="700" fill="#1f2937">≈ 8.6 (PL, synthesized)</text>
 <text x="210.0" y="214" text-anchor="end" font-size="12.5" fill="#111827">Dense LK flow</text>
 <rect x="220.0" y="184" width="389.4" height="16" rx="3" fill="#9ca3af"/>
 <text x="615.4" y="196.5" font-size="11" font-weight="700" fill="#1f2937">25.6 s</text>
 <rect x="220.0" y="205" width="229.5" height="16" rx="3" fill="#2563eb"/>
 <text x="455.5" y="217.5" font-size="11" font-weight="700" fill="#1f2937">154 ms</text>
-<rect x="220.0" y="226" width="137.0" height="16" rx="3" fill="#059669"/>
-<text x="363.0" y="238.5" font-size="11" font-weight="700" fill="#1f2937">≈ 8 (PL, AMD bench)</text>
+<rect x="220.0" y="226" width="127.0" height="16" rx="3" fill="#059669"/>
+<text x="353.0" y="238.5" font-size="11" font-weight="700" fill="#1f2937">≈ 5.8 (PL, synthesized)</text>
 <text x="210.0" y="292" text-anchor="end" font-size="12.5" fill="#111827">YOLOv9t detection</text>
 <rect x="220.0" y="262" width="308.6" height="16" rx="3" fill="#9ca3af"/>
 <text x="534.6" y="274.5" font-size="11" font-weight="700" fill="#1f2937">1.9 s</text>
 <rect x="220.0" y="283" width="209.9" height="16" rx="3" fill="#2563eb"/>
 <text x="435.9" y="295.5" font-size="11" font-weight="700" fill="#1f2937">82 ms</text>
-<rect x="220.0" y="304" width="165.7" height="16" rx="3" fill="#059669"/>
-<text x="391.7" y="316.5" font-size="11" font-weight="700" fill="#1f2937">10–30 (DPU, est.)</text>
+<rect x="220.0" y="304" width="186.6" height="16" rx="3" fill="#059669"/>
+<text x="412.6" y="316.5" font-size="11" font-weight="700" fill="#1f2937">13–39 (DPU B3136, est.)</text>
 <text x="210.0" y="370" text-anchor="end" font-size="12.5" fill="#111827">Horn + flow sums</text>
 <rect x="220.0" y="340" width="132.8" height="16" rx="3" fill="#9ca3af"/>
 <text x="358.8" y="352.5" font-size="11" font-weight="700" fill="#1f2937">7.0 ms</text>
 <rect x="220.0" y="361" width="46.3" height="16" rx="3" fill="#2563eb"/>
 <text x="272.3" y="373.5" font-size="11" font-weight="700" fill="#1f2937">0.44 ms (CPU)</text>
-<rect x="220.0" y="382" width="56.0" height="16" rx="3" fill="#059669"/>
-<text x="282.0" y="394.5" font-size="11" font-weight="700" fill="#1f2937">≈ 0.6 per pass (HLS engine)</text>
+<rect x="220.0" y="382" width="122.3" height="16" rx="3" fill="#059669"/>
+<text x="348.3" y="394.5" font-size="11" font-weight="700" fill="#1f2937">≈ 1.2–5 (4-lane HLS engine)</text>
 <text x="210.0" y="448" text-anchor="end" font-size="12.5" fill="#111827">Arm perception</text>
 <rect x="220.0" y="418" width="210.9" height="16" rx="3" fill="#9ca3af"/>
 <text x="436.9" y="430.5" font-size="11" font-weight="700" fill="#1f2937">85 ms (one core)</text>
@@ -61,6 +61,6 @@
 <text x="618.6" y="508.5" font-size="11" font-weight="700" fill="#1f2937">28.4 s</text>
 <rect x="220.0" y="517" width="244.1" height="16" rx="3" fill="#2563eb"/>
 <text x="470.1" y="529.5" font-size="11" font-weight="700" fill="#1f2937">245 ms</text>
-<rect x="220.0" y="538" width="190.3" height="16" rx="3" fill="#059669"/>
-<text x="416.3" y="550.5" font-size="11" font-weight="700" fill="#1f2937">≈ 33–44 between frames (pipelined)</text>
+<rect x="220.0" y="538" width="193.0" height="16" rx="3" fill="#059669"/>
+<text x="419.0" y="550.5" font-size="11" font-weight="700" fill="#1f2937">≈ 33–48 between frames (pipelined)</text>
 </svg>

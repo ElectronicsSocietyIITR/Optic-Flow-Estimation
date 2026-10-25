@@ -1,8 +1,44 @@
 # Fabric budget on the KV260 (K26 SOM)
 
-Date: 2026-10-24. Status: **estimate only.** Synthesis needs the Zynq UltraScale+ device data for Vitis 2024.2, which is not installed (`C:\Xilinx\Vitis\2024.2\data` has no parts). This report combines published resource tables with a bottom-up count from our HLS source. Every row marked *est.* is to be replaced by `csynth` and post-implementation numbers (section 7).
+## 0. Result: routed on the xck26 (2026-10-25)
 
-## 1. Bottom line
+Synthesized with Vitis HLS 2026.1 and **placed and routed out of context in Vivado 2026.1** on `xck26-sfvc784-2LV-c` (BASIC licence). These numbers replace every estimate below. Sections 1–7 are kept as the record of how we got here.
+
+| Kernel, chosen configuration | LUT | FF | BRAM36 | DSP | Clock achieved | Power, dynamic (Vivado) |
+|---|---|---|---|---|---|---|
+| `preprocess`: one `pyrDown` reused level by level | 9,598 | 11,419 | 16 | 45 | 3.838 ns (261 MHz) | 0.22 W |
+| `lk_wrapper`: FCW LK fork, 3×3 median, 34 remap lines | 26,375 | 31,221 | 88 | 93 | 3.581 ns (279 MHz) | 0.72 W |
+| `ttc_engine_top`: 4 lanes, per-term accumulators | 15,159 | 17,493 | 21 | 85 | 3.318 ns (301 MHz) | 0.51 W |
+| **Our kernels** | **51,132** | 60,133 | 125 | 223 | | **1.45 W** |
+| DPU B3136 (PG338, URAM build) | 47,270 | 85,782 | 2 + 64 URAM | 436 | 300 MHz | |
+| **Fabric total** | **≈ 98.4k of 117k (84 %)** | 146k (62 %) | 127 of 144 (88 %) | 659 (53 %) | | |
+
+**It fits.** Platform interconnect adds a few thousand LUTs (expect 88–92 % in the linked design). BRAM is the tightest resource; the LK's remap lines are the lever, at about 2 BRAM per line.
+
+**Timing.** `preprocess` and `lk_wrapper` miss 300 MHz. Run our kernels on a **250 MHz** clock, with the DPU on its own 300 MHz clock. At 250 MHz, preprocess is ≈ 8.6 ms per 1080p frame and LK ≈ 5.8 ms at 512×288. That changes nothing at the system level: the DPU still sets T2.
+
+**How we got here.** The first synthesis had our three kernels at 213k LUTs. The changes:
+
+| Kernel | Change | Effect |
+|---|---|---|
+| preprocess | one `pyrDown` instance instead of four | 32.3k → 19.3k csynth |
+| LK | the per-pass median filters are 29.7k of the core's 57k csynth LUTs; a 3×3 median keeps most of the 5×5's accuracy, while removing the median entirely doubles divergence error on the kernel's fixed-point flow; 34 remap lines | 75.0k → 49.3k csynth |
+| engine | per-term accumulator widths, natural-width products, 4 lanes with host batching | 105.7k → 35.8k csynth |
+
+csynth estimates were then 0.43–0.57× too high for LUTs and up to 0.22× for BRAM against routed results. That is why routed numbers, not csynth, decide the fit.
+
+Accuracy of the LK choices, all bit-true (AMD's kernel in C-simulation):
+
+| LK build | KITTI yaw RMS | EvTTC fused | Divergence alone | Warned before 2 s |
+|---|---|---|---|---|
+| AMD's 5×5 median, 50 lines | 0.670 °/s | 12.1 % | 8.6 % | 5/5 |
+| 3×3 median, 50 lines | 0.817 °/s | 12.2 % | 9.7 % | 5/5 |
+| 3×3 median, 34 lines (chosen) | see the evaluation report | | | |
+| no median, 50 lines | 0.688 °/s | 12.2 % | 16.3 % | 4/5 |
+| no median, 34 lines | 0.673 °/s | 12.1 % | 16.3 % | 5/5 |
+| no median, 26 lines | 0.737 °/s | 12.2 % | 16.2 % | 5/5 |
+
+## 1. Bottom line (estimate, 2026-10-24, superseded by section 0)
 
 - **The design as written does not fit.** DPU B4096, Vitis LK, a 16-lane Horn engine with 64-bit accumulators, preprocessing and interconnect add up to about 140k LUTs. The K26 has 117k.
 - This matches outside evidence:
