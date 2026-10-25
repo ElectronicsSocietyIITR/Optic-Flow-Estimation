@@ -27,13 +27,13 @@ Synthesized with Vitis HLS 2026.1 and **placed and routed out of context in Viva
 
 csynth estimates were then 0.43–0.57× too high for LUTs and up to 0.22× for BRAM against routed results. That is why routed numbers, not csynth, decide the fit.
 
-Accuracy of the LK choices, all bit-true (AMD's kernel in C-simulation):
+Accuracy of the LK choices, all bit-true (AMD's kernel in C-simulation). The chosen build keeps TTC accuracy and warning timing; yaw is about 27 % worse than AMD's default, still inside the 1.0 °/s target:
 
 | LK build | KITTI yaw RMS | EvTTC fused | Divergence alone | Warned before 2 s |
 |---|---|---|---|---|
 | AMD's 5×5 median, 50 lines | 0.670 °/s | 12.1 % | 8.6 % | 5/5 |
 | 3×3 median, 50 lines | 0.817 °/s | 12.2 % | 9.7 % | 5/5 |
-| 3×3 median, 34 lines (chosen) | see the evaluation report | | | |
+| **3×3 median, 34 lines (chosen)** | **0.849 °/s** | **12.2 %** | **9.8 %** | **5/5** |
 | no median, 50 lines | 0.688 °/s | 12.2 % | 16.3 % | 4/5 |
 | no median, 34 lines | 0.673 °/s | 12.1 % | 16.3 % | 5/5 |
 | no median, 26 lines | 0.737 °/s | 12.2 % | 16.2 % | 5/5 |
