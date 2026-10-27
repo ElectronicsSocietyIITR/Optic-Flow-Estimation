@@ -4,7 +4,7 @@
 #   1 hardware platform (kv260_platform.tcl)  -> kv260_fcw.xsa
 #   2 Vitis platform (xsct)                   -> pfm/kv260_fcw/export/kv260_fcw/kv260_fcw.xpfm
 #   3 DPU B3136 kernel (AMD DPU TRD)          -> dpu.xo  (+ arch.json for the YOLO compile)
-#   4 our kernels (v++ -c)                    -> preprocess.xo, lk_wrapper.xo, ttc_engine_top.xo
+#   4 our kernels (v++ -c)                    -> preprocess.xo, lk_wrapper.xo (+ ttc_engine_top.xo with ENGINE=1)
 #   5 link (v++ -l, link.cfg)                 -> fcw.xclbin
 #   6 Kria app (xmutil loadapp fcw)           -> app/fcw/{fcw.bit.bin, fcw.dtbo, fcw.xclbin, shell.json}
 # Usage: XILINX=/tools/Xilinx TRD=/opt/fcw/DPUCZDX8G_VAI_v3.0 OUT=/opt/fcw/build ./build_overlay.sh
@@ -42,32 +42,48 @@ need "$XPFM"
 
 # 3. DPU B3136 with UltraRAM (TRD README: B3136 U_BANK_IMG 4, WGT 15, BIAS 1), so BRAM stays free for our kernels
 if [[ ! -f dpu/dpu.xo ]]; then
-  rm -rf dpu && cp -r "$TRD/prj/Vitis" dpu && cp -r "$TRD/dpu_ip" dpu_ip
-  sed -i -e 's/^`define B4096 *$/`define B3136/' -e 's/^`define URAM_DISABLE *$/`define URAM_ENABLE/' \
+  rm -rf dpu && cp -r "$TRD/prj/Vitis" dpu
+  # The TRD ships dpu_conf.vh with CRLF line endings; normalise first so the anchored edits match.
+  sed -i -e 's/\r$//' -e 's/^`define B4096 *$/`define B3136/' -e 's/^`define URAM_DISABLE *$/`define URAM_ENABLE/' \
          -e '/`ifdef URAM_ENABLE/,/`elsif URAM_DISABLE/{s/def_UBANK_IMG_N *[0-9]*/def_UBANK_IMG_N          4/;s/def_UBANK_WGT_N *[0-9]*/def_UBANK_WGT_N          15/}' \
          dpu/dpu_conf.vh
-  grep -E '^`define (B[0-9]+|URAM_)' dpu/dpu_conf.vh
+  grep -E '^`define (B[0-9]+|URAM_)|def_UBANK_(IMG|WGT)_N' dpu/dpu_conf.vh
+  grep -q '^`define B3136' dpu/dpu_conf.vh && grep -q '^`define URAM_ENABLE' dpu/dpu_conf.vh \
+    || { echo "stage failed: dpu_conf.vh is not B3136 with UltraRAM" >&2; exit 1; }
   (cd dpu && make binary_container_1/dpu.xo KERNEL=DPU DEVICE=kv260 TARGET=hw VIVADO_ROOT="$XILINX/Vivado/$VER" \
-     DIR_PRJ="$OUT/dpu" TRD_HOME="$OUT")
+     DIR_PRJ="$OUT/dpu" TRD_PATH="$TRD")
   cp dpu/binary_container_1/dpu.xo dpu/dpu.xo
 fi
 need dpu/dpu.xo
 
 # 4. Our HLS kernels (sources and options as in each kernel's hls_config.cfg)
-hlsxo() {  # <name> <top> <source> [extra flags...]
+hlsxo() {  # <name> <top> <source> [extra flags...]; HLS_CLOCK: the scheduling target (the link sets the real clock)
   local name=$1 top=$2 src=$3; shift 3
-  [[ -f $name.xo ]] || v++ -c -t hw --platform "$XPFM" -k "$top" --hls.clock 250000000:"$top" \
+  [[ -f $name.xo ]] || v++ -c -t hw --platform "$XPFM" -k "$top" --hls.clock "${HLS_CLOCK:-250000000}":"$top" \
     -I "$REPO/hls" -I "$VISION" "$@" "$src" -o "$name.xo" --temp_dir "_x_$name" --save-temps
 }
 hlsxo preprocess preprocess "$REPO/hls/preprocess/src/preprocess.cpp"
-hlsxo lk_wrapper lk_wrapper "$REPO/hls/lk_wrapper/src/lk_wrapper.cpp" -DLK_MAX=512 -DLK_LINES=34 -DLK_WIN=11 -DLK_MEDIAN=3
-hlsxo ttc_engine_top ttc_engine_top "$REPO/hls/ttc_engine/src/ttc_engine.cpp" -DTTC_LANES=4
-for x in preprocess lk_wrapper ttc_engine_top; do need $x.xo; done
+# LK scheduled for 320 MHz although it runs at 220: linked, its 3x3 median network (7 logic levels per
+# cycle at a 250 MHz target) missed 220 MHz by 0.07 ns on a full chip. A faster target only adds pipeline
+# registers (latency), so the results stay bit-identical.
+HLS_CLOCK=320000000 hlsxo lk_wrapper lk_wrapper "$REPO/hls/lk_wrapper/src/lk_wrapper.cpp" -DLK_MAX=512 -DLK_LINES=34 -DLK_WIN=11 -DLK_MEDIAN=3
+KERNELS=(preprocess lk_wrapper)
+LINKCFG=(--config "$REPO/hls/system/link.cfg")
+if [[ ${ENGINE:-0} == 1 ]]; then  # the Horn engine; left out by default (link.cfg, fabric report 5.4)
+  hlsxo ttc_engine_top ttc_engine_top "$REPO/hls/ttc_engine/src/ttc_engine.cpp" -DTTC_LANES=4
+  KERNELS+=(ttc_engine_top)
+  LINKCFG+=(--config "$REPO/hls/system/link_engine.cfg")
+fi
+for x in "${KERNELS[@]}"; do need $x.xo; done
 
-# 5. Link
-[[ -f fcw.xclbin ]] || v++ -l -t hw --platform "$XPFM" --config "$REPO/hls/system/link.cfg" \
+# 5. Link. strip_interconnects.tcl turns off the register slices and data FIFOs v++ puts in the HP-port
+# interconnects; the first link spent 56 BRAM tiles and ~14k LUTs on them (32-bit kernel ports upsized in
+# FIFO mode).
+[[ -f fcw.xclbin ]] || v++ -l -t hw --platform "$XPFM" "${LINKCFG[@]}" \
+  --advanced.param compiler.userPostSysLinkOverlayTcl="$REPO/hls/system/strip_interconnects.tcl" \
+  --vivado.prop run.impl_1.STRATEGY=Performance_ExplorePostRoutePhysOpt \
   --vivado.impl.jobs "$JOBS" --vivado.synth.jobs "$JOBS" --save-temps --temp_dir _x_link \
-  dpu/dpu.xo preprocess.xo lk_wrapper.xo ttc_engine_top.xo -o fcw.xclbin
+  dpu/dpu.xo "${KERNELS[@]/%/.xo}" -o fcw.xclbin
 need fcw.xclbin
 cp _x_link/link/vivado/vpl/prj/prj.gen/sources_1/bd/*/ip/*_DPUCZDX8G_1_0/arch.json arch.json 2>/dev/null || true
 

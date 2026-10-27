@@ -57,7 +57,8 @@ class XrtAccelerator {
   XrtAccelerator(const std::string& xclbin, const std::string& xmodel, const FcwConfig& cfg, cv::Size source);
   ~XrtAccelerator();
   AcceleratedFrame operator()(const CapturedFrame& frame);
-  std::unique_ptr<MomentEngine> momentEngine();  // shares the device and the pyramid / flow slots
+  // Shares the device and the pyramid / flow slots; null when the overlay has no engine (use the software one).
+  std::unique_ptr<MomentEngine> momentEngine();
   struct Impl;  // opaque (xrt_accel.cpp)
 
  private:

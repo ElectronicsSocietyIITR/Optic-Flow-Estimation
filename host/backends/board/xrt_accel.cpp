@@ -1,6 +1,6 @@
 // The board's accelerator stage and Horn engine through XRT (see fcw/board.hpp). Board only: needs
-// XRT and the overlay (preprocess, lk_wrapper, ttc_engine_top + DPU). Not yet run on a board
-// (plan 2, Task 10).
+// XRT and the overlay (preprocess, lk_wrapper + DPU; ttc_engine_top when the overlay includes it). Not
+// yet run on a board (plan 2, Task 10).
 //
 // Per frame (T2): BGRx in -> preprocess -> tensor + pyramid slot N; then LK(slot N-1, slot N) in the
 // fabric while the DPU detects. Later (T3b, Option A): the engine reads slots N-1 and N and the flow of
@@ -36,6 +36,7 @@ struct XrtAccelerator::Impl {
   xrt::device dev;
   xrt::uuid uuid;
   xrt::kernel pre, lk, engine;
+  bool has_engine = false;  // the overlay may leave the engine out (fabric report 5.4): Horn then runs on the A53
   xrt::bo bgr, tensor, boxes, flow_boxes, fits, sums;
   struct Slot {
     xrt::bo pyr, flow;  // flow: 2 x rows x cols words, the LK's ping-pong halves; the result lands in the first
@@ -62,15 +63,21 @@ XrtAccelerator::XrtAccelerator(const std::string& xclbin, const std::string& xmo
   d.uuid = d.dev.load_xclbin(xclbin);
   d.pre = xrt::kernel(d.dev, d.uuid, "preprocess");
   d.lk = xrt::kernel(d.dev, d.uuid, "lk_wrapper");
-  d.engine = xrt::kernel(d.dev, d.uuid, "ttc_engine_top");
+  try {
+    d.engine = xrt::kernel(d.dev, d.uuid, "ttc_engine_top");
+    d.has_engine = true;
+  } catch (const std::exception&) {  // not in this xclbin: momentEngine() returns null, the runtime keeps the software engine
+  }
   d.yolo = std::make_unique<VartYolo>(xmodel);
   d.bgr = xrt::bo(d.dev, static_cast<size_t>(source.area()) * 4, d.pre.group_id(0));
   d.tensor = xrt::bo(d.dev, static_cast<size_t>(d.proc.area()) * 3, d.pre.group_id(1));
   d.tensor_host.resize(static_cast<size_t>(d.proc.area()) * 3);
-  d.boxes = xrt::bo(d.dev, kBoxes * 4 * 4, d.engine.group_id(3));
-  d.flow_boxes = xrt::bo(d.dev, kBoxes * 4 * 4, d.engine.group_id(4));
-  d.fits = xrt::bo(d.dev, kBoxes * 6 * 8, d.engine.group_id(5));
-  d.sums = xrt::bo(d.dev, kBoxes * kTerms * 8, d.engine.group_id(14));
+  if (d.has_engine) {
+    d.boxes = xrt::bo(d.dev, kBoxes * 4 * 4, d.engine.group_id(3));
+    d.flow_boxes = xrt::bo(d.dev, kBoxes * 4 * 4, d.engine.group_id(4));
+    d.fits = xrt::bo(d.dev, kBoxes * 6 * 8, d.engine.group_id(5));
+    d.sums = xrt::bo(d.dev, kBoxes * kTerms * 8, d.engine.group_id(14));
+  }
   const size_t pyr = static_cast<size_t>(pyrBytes(d.proc.height, d.proc.width)), flow = static_cast<size_t>(d.proc.area()) * 4;
   const std::vector<uint8_t> zeros(2 * flow, 0);  // both halves of a slot's flow buffer
   for (int i = 0; i < d.ring.slots(); ++i) {
@@ -201,6 +208,9 @@ class XrtMomentEngine : public MomentEngine {
 
 }  // namespace
 
-std::unique_ptr<MomentEngine> XrtAccelerator::momentEngine() { return std::make_unique<XrtMomentEngine>(impl_, impl_.get()); }
+std::unique_ptr<MomentEngine> XrtAccelerator::momentEngine() {
+  if (!impl_->has_engine) return nullptr;
+  return std::make_unique<XrtMomentEngine>(impl_, impl_.get());
+}
 
 }  // namespace fcw::board

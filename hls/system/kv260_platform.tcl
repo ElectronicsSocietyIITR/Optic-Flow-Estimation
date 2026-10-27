@@ -1,8 +1,8 @@
 # Minimal KV260 extensible hardware platform for the FCW overlay (Vivado 2023.1, batch):
 #   vivado -mode batch -source kv260_platform.tcl -tclargs <out_dir>
 # Follows AMD's Vitis-Tutorials 2023.1 Vitis_Platform_Creation/Design_Tutorials/01-Edge-KV260 (step 1), with
-# our clocks: 100 MHz control, 250 MHz kernels (default; preprocess / LK route at 261 / 279 MHz), 300 and
-# 600 MHz for the DPU (aclk, ap_clk_2). No video pipeline: capture is USB or file, display the PS DisplayPort.
+# our clocks: 100 MHz control, 220 MHz kernels (default), 275 and 550 MHz for the DPU (aclk, ap_clk_2).
+# No video pipeline: capture is USB or file, display the PS DisplayPort.
 set out [lindex $argv 0]
 if {$out eq ""} { set out [pwd]/kv260_fcw_hw }
 file mkdir $out
@@ -30,9 +30,12 @@ set_property -dict [list CONFIG.PSU__USE__M_AXI_GP0 {0} CONFIG.PSU__USE__M_AXI_G
 
 # Clocks and resets.
 set ck [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz clk_wiz_0]
+# One MMCM, VCO 1100 MHz, so every output is an exact divide and the DPU's aclk / ap_clk_2 pair is
+# phase-aligned 1:2. The first linked build (250 / 300 / 600) missed timing on all three by up to 0.22 ns,
+# and v++ added a second clock wizard for "600" (599 MHz) because the platform's was not exact.
 set_property -dict [list CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT3_USED {true} CONFIG.CLKOUT4_USED {true} \
-  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {100} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {250} \
-  CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {300} CONFIG.CLKOUT4_REQUESTED_OUT_FREQ {600} \
+  CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {100} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {220} \
+  CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {275} CONFIG.CLKOUT4_REQUESTED_OUT_FREQ {550} \
   CONFIG.RESET_TYPE {ACTIVE_LOW} CONFIG.RESET_PORT {resetn}] $ck
 connect_bd_net [get_bd_pins $ps/pl_clk0] [get_bd_pins $ck/clk_in1]
 connect_bd_net [get_bd_pins $ps/pl_resetn0] [get_bd_pins $ck/resetn]
