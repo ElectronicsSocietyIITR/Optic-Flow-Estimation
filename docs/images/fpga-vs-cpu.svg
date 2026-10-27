@@ -34,14 +34,14 @@
 <rect x="220.0" y="205" width="229.5" height="16" rx="3" fill="#2563eb"/>
 <text x="455.5" y="217.5" font-size="11" font-weight="700" fill="#1f2937">154 ms</text>
 <rect x="220.0" y="226" width="127.0" height="16" rx="3" fill="#059669"/>
-<text x="353.0" y="238.5" font-size="11" font-weight="700" fill="#1f2937">≈ 5.8 (PL, synthesized)</text>
+<text x="353.0" y="238.5" font-size="11" font-weight="700" fill="#1f2937">≈ 6.6 (PL, 220 MHz)</text>
 <text x="210.0" y="292" text-anchor="end" font-size="12.5" fill="#111827">YOLOv9t detection</text>
 <rect x="220.0" y="262" width="308.6" height="16" rx="3" fill="#9ca3af"/>
 <text x="534.6" y="274.5" font-size="11" font-weight="700" fill="#1f2937">1.9 s</text>
 <rect x="220.0" y="283" width="209.9" height="16" rx="3" fill="#2563eb"/>
 <text x="435.9" y="295.5" font-size="11" font-weight="700" fill="#1f2937">82 ms</text>
 <rect x="220.0" y="304" width="186.6" height="16" rx="3" fill="#059669"/>
-<text x="412.6" y="316.5" font-size="11" font-weight="700" fill="#1f2937">13–39 (DPU B3136, est.)</text>
+<text x="412.6" y="316.5" font-size="11" font-weight="700" fill="#1f2937">14–43 (DPU B3136, est.)</text>
 <text x="210.0" y="370" text-anchor="end" font-size="12.5" fill="#111827">Horn + flow sums</text>
 <rect x="220.0" y="340" width="132.8" height="16" rx="3" fill="#9ca3af"/>
 <text x="358.8" y="352.5" font-size="11" font-weight="700" fill="#1f2937">7.0 ms</text>
@@ -62,5 +62,5 @@
 <rect x="220.0" y="517" width="244.1" height="16" rx="3" fill="#2563eb"/>
 <text x="470.1" y="529.5" font-size="11" font-weight="700" fill="#1f2937">245 ms</text>
 <rect x="220.0" y="538" width="193.0" height="16" rx="3" fill="#059669"/>
-<text x="419.0" y="550.5" font-size="11" font-weight="700" fill="#1f2937">≈ 33–48 between frames (pipelined)</text>
+<text x="419.0" y="550.5" font-size="11" font-weight="700" fill="#1f2937">≈ 33–56 between frames (pipelined)</text>
 </svg>

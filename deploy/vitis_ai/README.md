@@ -33,7 +33,9 @@ deploy/vitis_ai/run_docker.sh ./compile.sh            # -> compiled/<model>/<mod
 
 `compile.sh` targets `arch_b3136.json` by default. Once the overlay is built, compile against
 the DPU actually in it: `ARCH=/opt/fcw/build/arch.json deploy/vitis_ai/run_docker.sh ./compile.sh yolov9t`.
-`run_docker.sh` passes `ARCH`, `IN_DIR` and `OUT_DIR` into the container.
+`run_docker.sh` passes `ARCH`, `IN_DIR` and `OUT_DIR` into the container. The built overlay's
+DPU (`arch_built.json`, fingerprint `0x101000056010406`) is the stock B3136: both models compile
+against it as one DPU subgraph, in `compiled_arch/` and `compiled_distilled_arch/`.
 
 For YOLOv9t, `quantize.py` sets the quantizer option `nndct_convert_silu_to_hswish`, so the
 original `yolov9t.pt` is quantised with Hardswish in place of SiLU; the test-mode score is
@@ -88,12 +90,35 @@ at 288x512, the pipeline's DPU input.
 |---|---|---|---|
 | YOLOv9t, original weights, SiLU kept | - | **no**: 358 layout transposes on the CPU, then `Op_type 18 is invalid for xcompiler` | - |
 | Hardswish, float (no quantisation) | 0.59 (40 frames) | - | - |
-| **Hardswish, INT8 (current `yolov9t_kv260.xmodel`)** | **0.64** | **yes**, 4.8 MB | **1 DPU (whole network)**, 0 CPU ops, 3 output transfers |
+| Hardswish, INT8 | 0.64 | yes, 4.8 MB | 1 DPU (whole network), 0 CPU ops, 3 output transfers |
+| **Hardswish, distilled, INT8 (deployed: `compiled_distilled_arch/`)** | **0.82**, raw head MAE 0.22 (see the caveat below) | **yes**, 4.8 MB | **1 DPU (whole network)** |
 
 The scenes have about two collision-relevant detections per frame, so these F1 values are
 noisy; what they show is that the SiLU → Hardswish swap, not INT8, costs most of the
-accuracy (on COCO: 0.378 → 0.317 mAP50-95). Planned next: distil the Hardswish model from the
-SiLU one on the dash-cam clips (the SiLU model's detections as labels) on a GPU.
+accuracy (on COCO: 0.378 → 0.317 mAP50-95).
+
+### Distilling the Hardswish model from the SiLU one
+
+Plain fine-tuning on the SiLU model's detections made the Hardswish model worse. Logit
+distillation (`scripts/distill_yolo.py`, `collision_avoidance/yolo_distill.py`) trains it
+to match the SiLU model's raw head outputs instead:
+* **class logits:** Bernoulli KL;
+* **box distributions:** DFL KL, weighted by the teacher's confidence.
+
+It trains at the DPU input, 288×512, for 20 epochs on an RTX 4060 laptop:
+* **training set, 3,284 frames:** every 15th frame of 8 dash-cam clips (2,880), plus every
+  2nd image of three KITTI drives (404);
+* **validation set, 720 frames:** two whole clips, `241220_131702_010` and `241220_132302_012`,
+  held out.
+
+| Hardswish YOLOv9t, float, on the held-out clips | F1 vs SiLU original | mAP50-95 vs the original's detections |
+|---|---|---|
+| before | 0.623 | 0.238 |
+| **distilled** (best epoch, 19) | **0.798** | **0.306** |
+
+The INT8 score of 0.82 in the table above comes from `quantize.py`'s evaluation frames.
+Those are sampled from all ten clips, eight of which were used for training. The
+held-out float figure, 0.80, is the cleaner estimate.
 
 PWC-Net with Vitis AI fast-finetune (AdaQuant) was started but stopped after ~11 h at 47/81
 layers (projected ~15 h more on CPU), so only the plain post-training result above exists.

@@ -1,5 +1,34 @@
 # Fabric budget on the KV260 (K26 SOM)
 
+## 00. Linked overlay: built, timing met (2026-10-28)
+
+`hls/system/build_overlay.sh`, Vitis/Vivado 2023.1, Kria platform built from `kv260_platform.tcl`. DPU B3136 (URAM build) + `lk_wrapper` + `preprocess`. **The Horn engine is left out** (fallback 5.4).
+
+| Routed, in the linked design | LUT | BRAM36 | URAM | DSP | Clock | Setup slack |
+|---|---|---|---|---|---|---|
+| DPU B3136 | 45,817 | 78 | 40 | 566 | 275 / 550 MHz | +0.036 / +0.030 ns |
+| `lk_wrapper` | 28,720 | 47 | 0 | 93 | 220 MHz | +0.012 ns (the 220 MHz clock) |
+| `preprocess` | 9,549 | 9 | 0 | 45 | 220 MHz | |
+| platform, interconnect | 5,601 | 0.5 | 0 | 0 | 100 MHz | +6.07 ns |
+| **Device** | **89,681 (77 %)** | **134.5 of 144 (93 %)** | 40 of 64 | 704 (56 %) | | **WNS +0.012, WHS +0.008 ns** |
+
+How the out-of-context plan in section 0 changed when linked:
+
+1. **BRAM, not LUTs, ran out.** The first link needed 233 BRAM tiles:
+   * The DPU's URAM build still uses 78 BRAM tiles. Section 0 assumed PG338's 2.
+   * v++ put register slices and FIFO-mode upsizers on the HP-port interconnects, 56 tiles and ≈ 14k LUTs. `strip_interconnects.tcl`, a post-system-link hook, sets the interconnects to STRATEGY 0 and turns them off.
+
+   With the engine the design still needed 148 tiles, so the engine is out (fallback 5.4; `ENGINE=1` links it back in).
+2. **Clocks.** At 250 / 300 / 600 MHz the linked design missed timing by up to 0.22 ns on all three, and v++ added a second clock wizard for "600" (599 MHz). The platform now makes 100 / 220 / 275 / 550 MHz from one 1100 MHz VCO, so every clock is exact and the DPU's pair is phase-aligned.
+3. **The last 0.07 ns** was LK's 3×3 median network: 7 logic levels in one cycle, at an HLS target of 250 MHz. LK is now scheduled for 320 MHz, which only adds pipeline registers, so the output is bit-identical. Implementation uses `Performance_ExplorePostRoutePhysOpt`.
+
+**Cost in speed:**
+* kernels 250 → 220 MHz: preprocess ≈ 9.8 ms, LK ≈ 6.6 ms;
+* DPU 300 → 275 MHz: YOLOv9t ≈ 14–43 ms, ≈ 9 % slower;
+* Horn in software: T3b ≈ 29–56 ms on the A53.
+
+The projection becomes ≈ 18–30 FPS, from 21–30.
+
 ## 0. Result: routed on the xck26 (2026-10-25)
 
 Synthesized with Vitis HLS 2026.1 and **placed and routed out of context in Vivado 2026.1** on `xck26-sfvc784-2LV-c` (BASIC licence). These numbers replace every estimate below. Sections 1–7 are kept as the record of how we got here.
@@ -144,7 +173,7 @@ T2's time is preprocess plus max(LK, DPU), so the DPU sets the frame rate. Secti
 
 ### 5.4 Horn engine on the A53
 
-This fallback is new; the spec did not list it.
+This fallback is new; the spec did not list it. **It is the one the built overlay uses** (section 00).
 
 - Option A already isolates the engine behind `MomentEngine`. So the board can run `SoftwareMomentEngine` with no other code change, which frees all of the engine's LUTs.
 - **Cost:** Horn sums and moments take 0.35 ms per frame on the PC. That projects to about 5–6 ms on one A53 core (PassMark ×15.9), on the object stage's own thread.
