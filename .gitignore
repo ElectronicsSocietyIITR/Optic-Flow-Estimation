@@ -37,3 +37,6 @@ hls/lk_ref/build/
 hls/preprocess/build/
 hls/preprocess/build_frame.png
 hls/lk_wrapper/build/
+
+# The deployable KV260 bundle (built overlay + its YOLO xmodel) is committed on purpose
+!deploy/kv260/*.xmodel

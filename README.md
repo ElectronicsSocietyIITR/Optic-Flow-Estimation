@@ -703,7 +703,7 @@ Stages, each skipped once its output exists: hardware platform (`kv260_platform.
 
 **2. Detector.** Recompile YOLOv9t against the built DPU: `ARCH=/opt/fcw/build/arch.json deploy/vitis_ai/run_docker.sh ./compile.sh yolov9t` (see [DPU model](#dpu-model)). The built DPU's fingerprint, `0x101000056010406`, is kept in `deploy/vitis_ai/arch_built.json`. The model compiles against it as one DPU subgraph.
 
-**3. Board.** Copy `app/fcw` to `/lib/firmware/xilinx/fcw` and run `sudo xmutil loadapp fcw`. Build the host with `cmake -DFCW_BOARD=ON` on the board image (XRT, VART), then:
+**3. Board.** Copy `app/fcw` to `/lib/firmware/xilinx/fcw` and run `sudo xmutil loadapp fcw`. The built files are committed in [`deploy/kv260/`](deploy/kv260/README.md), with the deployable `yolov9t_kv260.xmodel` and checksums, so the board does not need a local overlay build. Build the host with `cmake -DFCW_BOARD=ON` on the board image (XRT, VART), then:
 
 ```bash
 ./fcw_app --board --xclbin fcw.xclbin --xmodel yolov9t_kv260.xmodel --source /dev/video0 --fx 200
