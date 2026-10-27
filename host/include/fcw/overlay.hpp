@@ -22,4 +22,8 @@ class OverlayPainter {
   std::vector<cv::Rect> drawn_;
 };
 
+// The camera frame (CV_8UC4 or CV_8UC3) with the annotation layer alpha-blended over it in software, as the
+// display hardware shows it: for a window on the desktop or a recording. CV_8UC3 out, the camera's size.
+cv::Mat composeOverlay(const cv::Mat& camera, const FcwFrame& f, cv::Size processing);
+
 }  // namespace fcw

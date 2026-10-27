@@ -51,4 +51,17 @@ void OverlayPainter::paint(cv::Mat& overlay, const FcwFrame& f, cv::Size process
   }
 }
 
+cv::Mat composeOverlay(const cv::Mat& camera, const FcwFrame& f, cv::Size processing) {
+  cv::Mat layer = cv::Mat::zeros(camera.size(), CV_8UC4);
+  OverlayPainter().paint(layer, f, processing, camera.size());
+  cv::Mat alpha, fg, bg, out;
+  cv::extractChannel(layer, alpha, 3);
+  alpha.convertTo(alpha, CV_32F, 1.0 / 255);
+  cv::cvtColor(layer, fg, cv::COLOR_BGRA2BGR);
+  if (camera.channels() == 4) cv::cvtColor(camera, bg, cv::COLOR_BGRA2BGR);
+  else bg = camera;
+  cv::blendLinear(fg, bg, alpha, 1.0 - alpha, out);
+  return out;
+}
+
 }  // namespace fcw

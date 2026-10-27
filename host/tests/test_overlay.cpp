@@ -48,3 +48,19 @@ TEST(OverlayPainter, ClearsOnlyWhatItDrewBefore) {
   EXPECT_GT(alpha(overlay, 1125, 400), 0) << "the new box (x = 300 * 3.75) is drawn";
   EXPECT_EQ(overlay.at<cv::Vec4b>(1000, 1800), cv::Vec4b(1, 2, 3, 4)) << "untouched pixels are not rewritten";
 }
+
+// The board's window and recording: the camera frame with the annotation layer blended over it in software,
+// the picture the display hardware shows.
+TEST(ComposeOverlay, BlendsTheAnnotationLayerOverTheCameraFrame) {
+  const cv::Mat camera(kFrame, CV_8UC4, cv::Scalar(10, 20, 30, 0));
+  const fcw::FcwFrame f = frameWith({100, 100, 200, 200}, fcw::Level::Warning, 2.5);
+  const cv::Mat out = fcw::composeOverlay(camera, f, kProc);
+  ASSERT_EQ(out.type(), CV_8UC3);
+  ASSERT_EQ(out.size(), kFrame);
+  cv::Mat layer = cv::Mat::zeros(kFrame, CV_8UC4);
+  fcw::OverlayPainter().paint(layer, f, kProc, kFrame);
+  const cv::Vec4b edge = layer.at<cv::Vec4b>(500, 375);
+  EXPECT_EQ(out.at<cv::Vec3b>(500, 375), cv::Vec3b(edge[0], edge[1], edge[2])) << "opaque box edge";
+  EXPECT_EQ(out.at<cv::Vec3b>(560, 560), cv::Vec3b(10, 20, 30)) << "inside the box: the camera frame";
+  EXPECT_EQ(out.at<cv::Vec3b>(1000, 1800), cv::Vec3b(10, 20, 30)) << "far away: the camera frame";
+}

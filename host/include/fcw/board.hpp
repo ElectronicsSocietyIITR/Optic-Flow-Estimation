@@ -21,9 +21,13 @@ CaptureSource gstCapture(const std::string& source);
 
 // DRM/KMS display: the camera frame on the primary plane, boxes / TTC / banner on an ARGB8888 overlay
 // plane the DisplayPort hardware alpha-blends (issue 15: no full-frame drawing on the Arm cores).
+// The DRM card that drives a connected monitor: /dev/dri also holds the GPU's and the fabric's (zocl) cards,
+// so the display is not always card0. Throws, naming `dri`, when no card has a connected display.
+std::string findDisplayCard(const std::string& dri = "/dev/dri");
+
 class DrmDisplay {
  public:
-  explicit DrmDisplay(const std::string& card = "/dev/dri/card0");
+  explicit DrmDisplay(const std::string& card = "");  // "": findDisplayCard()
   ~DrmDisplay();
   DrmDisplay(const DrmDisplay&) = delete;
   DrmDisplay& operator=(const DrmDisplay&) = delete;

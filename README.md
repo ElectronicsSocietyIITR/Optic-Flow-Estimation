@@ -47,7 +47,7 @@
 | **Whole system: FPGA design vs CPU-only (A53)** | — | **≈ 33–56 ms vs 28.4 s per frame: ≈ 510–860× faster, ≈ 250–650× less energy per frame** (projected, see [FPGA design vs CPU-only vs GPU](#fpga-design-vs-cpu-only-vs-gpu)) | |
 | **Whole system: FPGA design vs native GPU (RTX 4060 Laptop, measured)** | — | **≈ 33–56 ms vs 245 ms per frame (≈ 4.4–7.4×), 10–15 W vs 47.7 W, ≈ 14–35× less energy per frame** | |
 | HLS kernels in C-simulation | bit-exact | **Horn engine 9 / 9 cases · LK wrapper 0 of 147,456 words differ · preprocess gray, tensor, pyramid exact** | ✅ |
-| Python ↔ C++ parity, parallel = serial | identical decisions | **59 / 59 GoogleTest tests** | ✅ |
+| Python ↔ C++ parity, parallel = serial | identical decisions | **70 / 70 GoogleTest tests**, plus 4 / 4 for the board's capture and display (Ubuntu 22.04) | ✅ |
 
 Everything above is measured on a PC. The overlay is built and meets timing, but **the KV260 board run has not happened yet** (see [Status](#status-and-roadmap)). The FPGA projections use the built overlay's clocks (kernels 220 MHz, DPU 275 MHz) and its Horn engine on the A53.
 
@@ -708,6 +708,8 @@ Stages, each skipped once its output exists: hardware platform (`kv260_platform.
 ```bash
 ./fcw_app --board --xclbin fcw.xclbin --xmodel yolov9t_kv260.xmodel --source /dev/video0 --fx 200
 ```
+
+The app shows its output full-screen on the monitor (HDMI or DisplayPort) with the desktop switched off (`sudo xmutil desktop_disable`), or in a window on the desktop with `--window`; `--output out.mp4` records the annotated video. Step by step, for a board with a monitor, keyboard and mouse: [`deploy/kv260/README.md`](deploy/kv260/README.md).
 
 None of this has run on a board yet. The overlay build completed on 2026-10-28 and meets timing. The bring-up steps, one per backend, are in [plan 2, Task 10](docs/superpowers/plans/2026-10-07-fcw-host-app.md).
 

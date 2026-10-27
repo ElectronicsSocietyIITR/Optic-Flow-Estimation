@@ -26,12 +26,31 @@ std::string pipelineFor(const std::string& source) {
 struct Pipeline {
   GstElement* pipe = nullptr;
   GstElement* sink = nullptr;
+  GstBus* bus = nullptr;
   ~Pipeline() {
     if (pipe) gst_element_set_state(pipe, GST_STATE_NULL);
+    if (bus) gst_object_unref(bus);
     if (sink) gst_object_unref(sink);
     if (pipe) gst_object_unref(pipe);
   }
 };
+
+// An error on the bus (a file that is not a video, a missing decoder plugin, an unplugged camera) never
+// reaches the appsink, so a plain pull would block forever: wait in slices and check the bus between them.
+GstSample* pullOrThrow(Pipeline& p) {
+  for (;;) {
+    if (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(p.sink), 100 * GST_MSECOND)) return s;
+    if (gst_app_sink_is_eos(GST_APP_SINK(p.sink))) return nullptr;
+    if (GstMessage* m = gst_bus_pop_filtered(p.bus, GST_MESSAGE_ERROR)) {
+      GError* err = nullptr;
+      gst_message_parse_error(m, &err, nullptr);
+      const std::string msg = err ? err->message : "unknown error";
+      if (err) g_error_free(err);
+      gst_message_unref(m);
+      throw std::runtime_error("GStreamer: " + msg);
+    }
+  }
+}
 
 }  // namespace
 
@@ -46,10 +65,11 @@ CaptureSource gstCapture(const std::string& source) {
     throw std::runtime_error("GStreamer: " + msg);
   }
   p->sink = gst_bin_get_by_name(GST_BIN(p->pipe), "sink");
+  p->bus = gst_element_get_bus(p->pipe);
   if (gst_element_set_state(p->pipe, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) throw std::runtime_error("GStreamer: cannot play " + source);
   const auto start = std::chrono::steady_clock::now();
   return [p, start]() -> std::optional<CapturedFrame> {
-    GstSample* sample = gst_app_sink_pull_sample(GST_APP_SINK(p->sink));
+    GstSample* sample = pullOrThrow(*p);
     if (!sample) return std::nullopt;  // end of stream
     GstStructure* st = gst_caps_get_structure(gst_sample_get_caps(sample), 0);
     int w = 0, h = 0;

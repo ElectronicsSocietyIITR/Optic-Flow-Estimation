@@ -5,6 +5,7 @@
 #include <opencv2/videoio.hpp>
 
 #include <filesystem>
+#include <fstream>
 
 #include "fcw/board.hpp"
 
@@ -43,4 +44,18 @@ TEST(GstCapture, ScalesSourcesLargerThanTheKernelInputTo1080p) {
   ASSERT_TRUE(f.has_value());
   EXPECT_EQ(f->bgr.cols, 1920);
   EXPECT_EQ(f->bgr.rows, 1080);
+}
+
+// A source GStreamer cannot decode (a wrong file, a missing decoder plugin) must fail with GStreamer's
+// message, not block on the first frame forever.
+TEST(GstCapture, ReportsASourceItCannotDecode) {
+  const auto path = std::filesystem::temp_directory_path() / "fcw_not_a_video.mp4";
+  std::ofstream(path) << "this is not a video\n";
+  try {
+    auto source = fcw::board::gstCapture(path.string());
+    source();
+    FAIL() << "expected an error";
+  } catch (const std::runtime_error& e) {
+    EXPECT_NE(std::string(e.what()).find("GStreamer"), std::string::npos) << e.what();
+  }
 }

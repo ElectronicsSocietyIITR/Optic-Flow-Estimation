@@ -5,7 +5,9 @@
 // On the PC, detections come from a file recorded by the Python detector:
 //   python tools/export_golden.py --record-detections clip.mp4 --record-out dets.yml.gz
 // On the KV260 (built with -DFCW_BOARD=ON): --board --xclbin fcw.xclbin --xmodel yolov9t.xmodel; capture by
-// GStreamer, preprocessing / LK / Horn engine in the fabric, YOLO on the DPU, DRM display (plan 2, Task 10).
+// GStreamer, preprocessing / LK (and the Horn engine, when the overlay has it) in the fabric, YOLO on the DPU.
+// Output: full-screen DRM display (the desktop switched off; --card picks the DRM card, default the one with a
+// monitor), or --window for a window on the desktop; --output records the annotated video (plan 2, Task 10).
 #include <opencv2/highgui.hpp>
 #include <opencv2/videoio.hpp>
 
@@ -20,13 +22,14 @@
 #include "fcw/runtime.hpp"
 #ifdef FCW_BOARD
 #include "fcw/board.hpp"
+#include "fcw/overlay.hpp"
 #endif
 
 namespace {
 
 struct Args {
-  std::string source, detections, output, xclbin, xmodel;
-  bool board = false;
+  std::string source, detections, output, xclbin, xmodel, card;
+  bool board = false, window = false;
   double fx = 500.0;
   int max_frames = 0;
   bool display = true;
@@ -49,6 +52,8 @@ Args parse(int argc, char** argv) {
     else if (k == "--board") a.board = true;
     else if (k == "--xclbin") a.xclbin = next();
     else if (k == "--xmodel") a.xmodel = next();
+    else if (k == "--card") a.card = next();
+    else if (k == "--window") a.window = true;
     else throw std::runtime_error("unknown argument " + k);
   }
   if (a.source.empty()) throw std::runtime_error("--source is required");
@@ -95,7 +100,8 @@ int runBoard(const Args& args) {
   cfg.fy = args.fx * (static_cast<double>(proc.height) / src.height) / (static_cast<double>(proc.width) / src.width);
   fcw::board::XrtAccelerator accel(args.xclbin, args.xmodel, cfg, src);
   std::unique_ptr<fcw::board::DrmDisplay> display;
-  if (args.display) display = std::make_unique<fcw::board::DrmDisplay>();
+  if (args.display && !args.window) display = std::make_unique<fcw::board::DrmDisplay>(args.card);
+  cv::VideoWriter writer;
   int count = 0;
   fcw::CaptureSource source = [&]() -> std::optional<fcw::CapturedFrame> {
     if (args.max_frames && count >= args.max_frames) return std::nullopt;
@@ -111,6 +117,17 @@ int runBoard(const Args& args) {
     levels.push_back(f.level());
     totals.push_back(f.timings_ms.at("total"));
     if (display) display->show(f, proc);
+    if (!args.window && args.output.empty()) return;
+    const cv::Mat img = fcw::composeOverlay(f.frame, f, proc);  // costs Arm time: for testing, not the 30 FPS path
+    if (!args.output.empty()) {
+      // 30 FPS nominal: the recording holds every processed frame (a live camera drops some under load)
+      if (!writer.isOpened()) writer.open(args.output, cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 30.0, img.size());
+      writer.write(img);
+    }
+    if (args.window) {
+      cv::imshow("Forward collision warning", img);
+      cv::waitKey(1);
+    }
   });
   runtime.setMomentEngine(accel.momentEngine());
   const auto start = std::chrono::steady_clock::now();

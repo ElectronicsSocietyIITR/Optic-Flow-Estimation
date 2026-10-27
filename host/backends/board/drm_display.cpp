@@ -10,8 +10,12 @@
 
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <regex>
 #include <stdexcept>
+#include <vector>
 
 #include "fcw/board.hpp"
 #include "fcw/overlay.hpp"
@@ -61,7 +65,34 @@ uint64_t planeType(int fd, uint32_t plane) {
   return type;
 }
 
+bool hasConnectedDisplay(const std::string& card) {
+  const int fd = open(card.c_str(), O_RDWR | O_CLOEXEC);
+  if (fd < 0) return false;
+  bool connected = false;
+  if (drmModeResPtr res = drmModeGetResources(fd)) {  // null for render-only devices (GPU, zocl)
+    for (int i = 0; i < res->count_connectors && !connected; ++i)
+      if (drmModeConnectorPtr c = drmModeGetConnector(fd, res->connectors[i])) {
+        connected = c->connection == DRM_MODE_CONNECTED && c->count_modes > 0;
+        drmModeFreeConnector(c);
+      }
+    drmModeFreeResources(res);
+  }
+  close(fd);
+  return connected;
+}
+
 }  // namespace
+
+std::string findDisplayCard(const std::string& dri) {
+  std::vector<std::string> cards;
+  if (std::filesystem::is_directory(dri))
+    for (const auto& e : std::filesystem::directory_iterator(dri))
+      if (std::regex_match(e.path().filename().string(), std::regex("card[0-9]+"))) cards.push_back(e.path().string());
+  std::sort(cards.begin(), cards.end());
+  for (const auto& card : cards)
+    if (hasConnectedDisplay(card)) return card;
+  throw std::runtime_error("DRM: no card in " + dri + " has a connected display (" + std::to_string(cards.size()) + " cards)");
+}
 
 struct DrmDisplay::Impl {
   int fd = -1;
@@ -74,8 +105,9 @@ struct DrmDisplay::Impl {
 
 DrmDisplay::DrmDisplay(const std::string& card) : impl_(std::make_unique<Impl>()) {
   Impl& d = *impl_;
-  d.fd = open(card.c_str(), O_RDWR | O_CLOEXEC);
-  if (d.fd < 0) throw std::runtime_error("DRM: cannot open " + card);
+  const std::string path = card.empty() ? findDisplayCard() : card;
+  d.fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
+  if (d.fd < 0) throw std::runtime_error("DRM: cannot open " + path);
   drmSetClientCap(d.fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
   drmModeResPtr res = drmModeGetResources(d.fd);
   if (!res) throw std::runtime_error("DRM: no resources");
@@ -112,7 +144,8 @@ DrmDisplay::DrmDisplay(const std::string& card) : impl_(std::make_unique<Impl>()
     d.video[k] = createBuffer(d.fd, d.mode.hdisplay, d.mode.vdisplay, DRM_FORMAT_XRGB8888);
     if (d.overlay) d.annot[k] = createBuffer(d.fd, d.mode.hdisplay, d.mode.vdisplay, DRM_FORMAT_ARGB8888);
   }
-  if (drmModeSetCrtc(d.fd, d.crtc, d.video[0].fb, 0, 0, &d.connector, 1, &d.mode)) throw std::runtime_error("DRM: mode set failed");
+  if (drmModeSetCrtc(d.fd, d.crtc, d.video[0].fb, 0, 0, &d.connector, 1, &d.mode))
+    throw std::runtime_error("DRM: mode set failed on " + path + " (is the desktop still running? sudo xmutil desktop_disable, or use --window)");
 }
 
 DrmDisplay::~DrmDisplay() {
